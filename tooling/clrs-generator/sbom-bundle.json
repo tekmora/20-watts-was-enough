@@ -6,31 +6,31 @@
   "files": [
     {
       "name": "derivation-receipt.json",
-      "url": "https://github.com/cordanaLLM/20-watts-was-enough/releases/download/clrs-sbom-bundle-2026-10-24/derivation-receipt.json",
+      "url": "https://github.com/tekmora/20-watts-was-enough/releases/download/clrs-sbom-bundle-2026-10-24/derivation-receipt.json",
       "sha256": "431abe018ef9355e6950ac16e68e411d5bc667d3765a2bab0ea8a5def7a490ba",
       "size_bytes": 2135
     },
     {
       "name": "execution-record.json",
-      "url": "https://github.com/cordanaLLM/20-watts-was-enough/releases/download/clrs-sbom-bundle-2026-10-24/execution-record.json",
+      "url": "https://github.com/tekmora/20-watts-was-enough/releases/download/clrs-sbom-bundle-2026-10-24/execution-record.json",
       "sha256": "c6426d5f88869b8a1c6b5e691cafbc2e1a364fde29e795479c501d76045d9dd8",
       "size_bytes": 11171
     },
     {
       "name": "image.spdx.json",
-      "url": "https://github.com/cordanaLLM/20-watts-was-enough/releases/download/clrs-sbom-bundle-2026-10-24/image.spdx.json",
+      "url": "https://github.com/tekmora/20-watts-was-enough/releases/download/clrs-sbom-bundle-2026-10-24/image.spdx.json",
       "sha256": "d70aaa688fec0b16e36ba4bac3127448d619c63cf58f380005a73d5cf283e1df",
       "size_bytes": 3052469
     },
     {
       "name": "scanner-statement.intoto.json",
-      "url": "https://github.com/cordanaLLM/20-watts-was-enough/releases/download/clrs-sbom-bundle-2026-10-24/scanner-statement.intoto.json",
+      "url": "https://github.com/tekmora/20-watts-was-enough/releases/download/clrs-sbom-bundle-2026-10-24/scanner-statement.intoto.json",
       "sha256": "25d8d9b10a0977ac6c85409c33f3c5c52262e461eede46ef524cbb909d12e141",
       "size_bytes": 3052585
     },
     {
       "name": "supplied-binding.json",
-      "url": "https://github.com/cordanaLLM/20-watts-was-enough/releases/download/clrs-sbom-bundle-2026-10-24/supplied-binding.json",
+      "url": "https://github.com/tekmora/20-watts-was-enough/releases/download/clrs-sbom-bundle-2026-10-24/supplied-binding.json",
       "sha256": "c6835cf6b6a4744ce7dba6fa2d602109915ed4e34fcd9d3ee69033807e14d92c",
       "size_bytes": 996
     }
