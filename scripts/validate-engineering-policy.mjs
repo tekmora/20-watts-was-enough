@@ -4187,7 +4187,10 @@ export function validateFundingConfig(config, relativePath = ".github/FUNDING.ym
     return [`${relativePath}: funding configuration must be a mapping`];
   }
 
-  const expectedKeys = new Set(["github", "ko_fi"]);
+  // The settled fleet set: GitHub Sponsors, Ko-fi and Patreon, byte-equal to
+  // the copy in vidiko/vmafx. GitHub logins are case-insensitive (the forge
+  // renders `github: [Lusoris]` as https://github.com/lusoris).
+  const expectedKeys = new Set(["github", "ko_fi", "patreon"]);
   for (const key of Object.keys(config)) {
     if (!expectedKeys.has(key)) {
       findings.push(`${relativePath}: unverified funding platform ${key}`);
@@ -4197,12 +4200,16 @@ export function validateFundingConfig(config, relativePath = ".github/FUNDING.ym
   if (
     !Array.isArray(config.github)
     || config.github.length !== 1
-    || config.github[0] !== "lusoris"
+    || typeof config.github[0] !== "string"
+    || config.github[0].toLowerCase() !== "lusoris"
   ) {
     findings.push(`${relativePath}: github must contain only the verified lusoris sponsor identity`);
   }
   if (config.ko_fi !== "lusoris") {
     findings.push(`${relativePath}: ko_fi must use the verified lusoris identity`);
+  }
+  if (config.patreon !== "Lusoris") {
+    findings.push(`${relativePath}: patreon must use the verified Lusoris identity`);
   }
   return findings;
 }

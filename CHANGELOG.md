@@ -24,6 +24,10 @@ the exact diff; this file records why the project changed.
 
 ### Changed
 
+- Add Patreon to the funding links; `.github/FUNDING.yml` now equals the
+  fleet copy in `vidiko/vmafx`, and the engineering policy admits that set
+  and matches the GitHub login case-insensitively.
+
 - Lock the PDF renderer to Buildx 0.39.0; the renderer cache inventory admits
   the empty ingest lock files under `ingest-locks` that its BuildKit client
   keeps in a local cache store
