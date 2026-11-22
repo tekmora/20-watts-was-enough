@@ -24,6 +24,12 @@ the exact diff; this file records why the project changed.
 
 ### Changed
 
+- Ruleset `21746706` (`Protect main`) now names one bypass actor: the repository
+  admin role (actor id `5`) in bypass mode `pull_request`; it bypasses rules on
+  pull requests only, so a direct push to `main` stays refused for every actor
+  ([Decision 0133](decisions/0133-let-the-repository-admin-bypass-main-on-pull-requests.md)).
+  This replaces the empty bypass list recorded for 0.3.0.
+
 - Lock the PDF renderer to Buildx 0.39.0; the renderer cache inventory admits
   the empty ingest lock files under `ingest-locks` that its BuildKit client
   keeps in a local cache store

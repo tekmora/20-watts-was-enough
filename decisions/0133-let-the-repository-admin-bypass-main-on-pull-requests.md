@@ -12,8 +12,11 @@
   been reverted, compare every other field with the snapshot taken then, and
   keep coding agents off the bypass).
 - **Partly supersedes:** [0096](0096-tighten-the-live-main-ruleset-to-the-rendered-policy.md)
-  point 4, only where it keeps the bypass list empty and leaves the file's
-  bypass actor unwritten. Every other part of 0096 stands.
+  points 3 and 4, limited to the bypass actor: point 3 only as far as it would
+  forbid adding this one bypass actor; point 4 where it keeps the bypass list
+  empty and leaves the file's bypass actor unwritten. Every other live ruleset
+  change must still make the ruleset stricter or leave it equal, and every other
+  part of 0096 stands.
 - **Authority:** repository host-settings record; no change to research
   authority, claim status or acceptance criteria.
 
