@@ -3553,13 +3553,51 @@ test("issue-form validation rejects duplicate authority field IDs", () => {
 });
 
 test("funding validation accepts only the verified maintainer identities", () => {
-  assert.deepEqual(validateFundingConfig({ github: ["lusoris"], ko_fi: "lusoris" }), []);
   assert.deepEqual(
-    validateFundingConfig({ github: ["someone-else"], ko_fi: "lusoris", custom: "https://example.com" }),
+    validateFundingConfig({ ko_fi: "lusoris", github: ["Lusoris"], patreon: "Lusoris" }),
+    [],
+  );
+  assert.deepEqual(
+    validateFundingConfig({ github: ["lusoris"], ko_fi: "lusoris", patreon: "Lusoris" }),
+    [],
+  );
+  assert.deepEqual(
+    validateFundingConfig({
+      github: ["someone-else"],
+      ko_fi: "lusoris",
+      patreon: "Lusoris",
+      custom: "https://example.com",
+    }),
     [
       ".github/FUNDING.yml: unverified funding platform custom",
       ".github/FUNDING.yml: github must contain only the verified lusoris sponsor identity",
     ],
+  );
+});
+
+test("funding validation requires the settled Patreon identity", () => {
+  assert.deepEqual(
+    validateFundingConfig({ github: ["lusoris"], ko_fi: "lusoris" }),
+    [".github/FUNDING.yml: patreon must use the verified Lusoris identity"],
+  );
+  assert.deepEqual(
+    validateFundingConfig({ github: ["lusoris"], ko_fi: "lusoris", patreon: "someone-else" }),
+    [".github/FUNDING.yml: patreon must use the verified Lusoris identity"],
+  );
+});
+
+test("funding validation rejects a second or non-text GitHub identity", () => {
+  assert.deepEqual(
+    validateFundingConfig({ github: ["lusoris", "Lusoris"], ko_fi: "lusoris", patreon: "Lusoris" }),
+    [".github/FUNDING.yml: github must contain only the verified lusoris sponsor identity"],
+  );
+  assert.deepEqual(
+    validateFundingConfig({ github: [42], ko_fi: "lusoris", patreon: "Lusoris" }),
+    [".github/FUNDING.yml: github must contain only the verified lusoris sponsor identity"],
+  );
+  assert.deepEqual(
+    validateFundingConfig({ github: [], ko_fi: "lusoris", patreon: "Lusoris" }),
+    [".github/FUNDING.yml: github must contain only the verified lusoris sponsor identity"],
   );
 });
 
