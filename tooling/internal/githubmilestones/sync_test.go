@@ -214,3 +214,99 @@ func TestSyncRejectsMissingAuthorityAndInvalidAPIBase(t *testing.T) {
 		t.Fatal("Sync() accepted an invalid API base")
 	}
 }
+
+func TestVerifyNamesDriftedFields(t *testing.T) {
+	t.Parallel()
+	manifest := testManifest(1)
+	milestone := manifest.Milestones[0]
+	validDescription := managedDescription("owner/repository", milestone)
+	oldOwnerDescription := managedDescription("old/repository", milestone)
+	matching := []remoteMilestone{{
+		Number: 7, State: milestone.State, Title: milestone.Title, Description: &validDescription,
+	}}
+	cases := []struct {
+		name      string
+		remote    []remoteMilestone
+		wantDrift string
+	}{
+		{name: "matching", remote: matching},
+		{
+			name: "old owner description",
+			remote: []remoteMilestone{{
+				Number: 7, State: milestone.State, Title: milestone.Title, Description: &oldOwnerDescription,
+			}},
+			wantDrift: "description",
+		},
+		{
+			name: "title and state drift",
+			remote: []remoteMilestone{{
+				Number: 7, State: "closed", Title: "M0 — Drifted title", Description: &validDescription,
+			}},
+			wantDrift: "title, state",
+		},
+		{name: "missing managed milestone", remote: []remoteMilestone{}, wantDrift: "missing"},
+		{
+			name: "due_on set",
+			remote: []remoteMilestone{{
+				Number: 7, State: milestone.State, Title: milestone.Title,
+				Description: &validDescription, DueOn: pointer("2030-01-01T00:00:00Z"),
+			}},
+			wantDrift: "due_on",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runVerifyDriftCase(t, manifest, matching, tc.remote, tc.wantDrift)
+		})
+	}
+}
+
+func runVerifyDriftCase(
+	t *testing.T,
+	manifest Manifest,
+	matching []remoteMilestone,
+	verifyRemote []remoteMilestone,
+	wantDrift string,
+) {
+	t.Helper()
+	var mutex sync.Mutex
+	current := matching
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		mutex.Lock()
+		defer mutex.Unlock()
+		_ = json.NewEncoder(writer).Encode(current)
+	}))
+	defer server.Close()
+	options := Options{APIBase: server.URL, Repository: "owner/repository", Token: "test-token"}
+	plan, err := Preflight(context.Background(), server.Client(), manifest, options)
+	if err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+	mutex.Lock()
+	current = verifyRemote
+	mutex.Unlock()
+	inventory, err := plan.Verify(context.Background(), server.Client(), options)
+	assertVerifyOutcome(t, inventory, err, matching[0].Number, wantDrift)
+}
+
+func assertVerifyOutcome(t *testing.T, inventory Inventory, err error, wantNumber int, wantDrift string) {
+	t.Helper()
+	if wantDrift == "" {
+		if err != nil {
+			t.Fatalf("Verify() error = %v, want nil", err)
+		}
+		if number, ok := inventory.Number("M0"); !ok || number != wantNumber {
+			t.Fatalf("inventory.Number(M0) = %d, %v, want %d, true", number, ok, wantNumber)
+		}
+		return
+	}
+	if err == nil {
+		t.Fatalf("Verify() error = nil, want %q drift", wantDrift)
+	}
+	message := err.Error()
+	if !strings.Contains(message, wantDrift) || !strings.Contains(message, "sync-metadata") ||
+		strings.Contains(message, "after synchronization") {
+		t.Fatalf("Verify() error = %q, want %q and sync-metadata without after synchronization", message, wantDrift)
+	}
+}

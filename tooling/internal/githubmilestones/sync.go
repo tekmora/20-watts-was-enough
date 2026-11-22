@@ -194,13 +194,39 @@ func (plan Plan) Verify(ctx context.Context, client HTTPClient, options Options)
 	for _, desired := range plan.manifest.Milestones {
 		state := managed[desired.ID]
 		description := managedDescription(options.Repository, desired)
-		if state == nil || state.Number < 1 || state.Title != desired.Title || state.State != desired.State ||
-			state.DueOn != nil || state.Description == nil || *state.Description != description {
-			return Inventory{}, fmt.Errorf("managed GitHub milestone %s does not match the preflighted manifest after synchronization", desired.ID)
+		if drift := milestoneDrift(state, desired, description); len(drift) > 0 {
+			return Inventory{}, fmt.Errorf(
+				"managed GitHub milestone %s differs from .github/milestones.json (%s); repair with 20w github sync-metadata (.github/workflows/sync-repository-metadata.yml)",
+				desired.ID,
+				strings.Join(drift, ", "),
+			)
 		}
 		numbers[desired.ID] = state.Number
 	}
 	return Inventory{numbers: numbers}, nil
+}
+
+func milestoneDrift(state *remoteMilestone, desired Milestone, description string) []string {
+	if state == nil {
+		return []string{"missing"}
+	}
+	var fields []string
+	if state.Number < 1 {
+		fields = append(fields, "number")
+	}
+	if state.Title != desired.Title {
+		fields = append(fields, "title")
+	}
+	if state.State != desired.State {
+		fields = append(fields, "state")
+	}
+	if state.DueOn != nil {
+		fields = append(fields, "due_on")
+	}
+	if state.Description == nil || *state.Description != description {
+		fields = append(fields, "description")
+	}
+	return fields
 }
 
 // Sync is the compatibility entry point for milestone-only maintenance. The
