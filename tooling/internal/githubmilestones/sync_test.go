@@ -309,4 +309,9 @@ func assertVerifyOutcome(t *testing.T, inventory Inventory, err error, wantNumbe
 		strings.Contains(message, "after synchronization") {
 		t.Fatalf("Verify() error = %q, want %q and sync-metadata without after synchronization", message, wantDrift)
 	}
+	wantDueOnHint := strings.Contains(wantDrift, "due_on")
+	hasDueOnHint := strings.Contains(message, "remove its due date")
+	if wantDueOnHint != hasDueOnHint {
+		t.Fatalf("Verify() error = %q, want remove its due date hint=%v", message, wantDueOnHint)
+	}
 }

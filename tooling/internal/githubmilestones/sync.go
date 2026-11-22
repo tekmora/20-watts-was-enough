@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -196,9 +197,10 @@ func (plan Plan) Verify(ctx context.Context, client HTTPClient, options Options)
 		description := managedDescription(options.Repository, desired)
 		if drift := milestoneDrift(state, desired, description); len(drift) > 0 {
 			return Inventory{}, fmt.Errorf(
-				"managed GitHub milestone %s differs from .github/milestones.json (%s); repair with 20w github sync-metadata (.github/workflows/sync-repository-metadata.yml)",
+				"managed GitHub milestone %s differs from .github/milestones.json (%s); %s",
 				desired.ID,
 				strings.Join(drift, ", "),
+				verifyRepairHint(drift),
 			)
 		}
 		numbers[desired.ID] = state.Number
@@ -227,6 +229,14 @@ func milestoneDrift(state *remoteMilestone, desired Milestone, description strin
 		fields = append(fields, "description")
 	}
 	return fields
+}
+
+func verifyRepairHint(drift []string) string {
+	hint := "repair with 20w github sync-metadata (.github/workflows/sync-repository-metadata.yml)"
+	if slices.Contains(drift, "due_on") {
+		return "remove its due date on GitHub explicitly (sync-metadata refuses managed due dates), then " + hint
+	}
+	return hint
 }
 
 // Sync is the compatibility entry point for milestone-only maintenance. The
