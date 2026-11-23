@@ -358,6 +358,9 @@ the exact diff; this file records why the project changed.
 
 ### Fixed
 
+- The fixture-026 isolated-child result test derives its child deadline from a
+  measured baseline plus a stall allowance and reports the reason for an
+  abstention. The production child deadline remains 15 seconds.
 - Workstation output-lock `retain()` and `release()` take an optional
   per-call `timeoutMs` that bounds each of their I/O calls, so a test can
   shorten the release deadline without shortening the lock's acquire I/O bound.
