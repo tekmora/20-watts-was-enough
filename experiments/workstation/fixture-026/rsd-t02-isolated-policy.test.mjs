@@ -519,16 +519,20 @@ async function wrapperExecutable(filePath) {
   }
 }
 
-test("wrapper execution requires execute permission", { skip: process.platform === "win32" }, async () => {
-  // The ignored checkout tmp/ can host the executable control even when the system temp directory is noexec.
+test("wrapper execution requires execute permission", { skip: process.platform === "win32" }, async (context) => {
+  // Checkout tmp/ may also be mounted noexec, so the 0644 result is meaningful only if the 0755 control passes.
   const parent = path.resolve("tmp");
   await boundedIo(() => mkdir(parent, { recursive: true }), "create checkout tmp directory");
   await withTemporaryDirectory(path.join(parent, "fixture-026-mode-"), async (directory) => {
-    for (const mode of [0o644, 0o755]) {
-      const filePath = path.join(directory, mode.toString(8));
-      await boundedIo((signal) => writeFile(filePath, "", { mode, signal }), "write mode fixture");
-      assert.equal(await wrapperExecutable(filePath), mode === 0o755);
+    const control = path.join(directory, "755");
+    await boundedIo((signal) => writeFile(control, "", { mode: 0o755, signal }), "write executable control");
+    if (!(await wrapperExecutable(control))) {
+      context.skip("checkout tmp/ does not permit execution (noexec); execute-permission control unavailable");
+      return;
     }
+    const filePath = path.join(directory, "644");
+    await boundedIo((signal) => writeFile(filePath, "", { mode: 0o644, signal }), "write mode fixture");
+    assert.equal(await wrapperExecutable(filePath), false);
     await assert.rejects(wrapperExecutable(path.join(directory, "missing")), { code: "ENOENT" });
   });
 });
