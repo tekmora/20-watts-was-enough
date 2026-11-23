@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -43,6 +44,8 @@ const CHILD_MARGIN = 6;
 const STALL_ALLOWANCE_MS = 30_000;
 const PLANTED_STALL_MS = 17_000;
 const RESULT_TEST_TIMEOUT_MS = 300_000;
+// Match OUTPUT_LOCK_IO_TIMEOUT_MS in workstation/lib/output-lock.mjs for temporary filesystem work.
+const TEMP_IO_TIMEOUT_MS = 30_000;
 const FIXTURE_ROOT = "experiments/workstation/fixture-026";
 const CONFIG_PATH = path.join(FIXTURE_ROOT, "configs", "rsd-t02-arm-bank.json");
 const units = buildFixture026RsdT02WorkUnits({ profile: "smoke", seeds: [SEED] });
@@ -53,9 +56,34 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function classifyProbeClose({ code, signal, timedOut, stdout }) {
+  if (timedOut) {
+    throw new Error(`UNDECIDED: host starved; child-process probe exceeded ${STALL_ALLOWANCE_MS} ms`);
+  }
+  if (signal !== null) {
+    throw new Error(`child-process probe terminated by ${signal} before its ${STALL_ALLOWANCE_MS} ms deadline`);
+  }
+  return code === 0 && stdout === "fixture-026-child-probe";
+}
+
+test("probe close distinguishes its own deadline from an external kill", () => {
+  const success = { code: 0, signal: null, timedOut: false, stdout: "fixture-026-child-probe" };
+  assert.equal(classifyProbeClose(success), true);
+  assert.equal(classifyProbeClose({ ...success, code: 1 }), false);
+  assert.equal(classifyProbeClose({ ...success, stdout: "unexpected" }), false);
+  assert.throws(() => classifyProbeClose({ ...success, code: null, signal: "SIGKILL" }), {
+    message: `child-process probe terminated by SIGKILL before its ${STALL_ALLOWANCE_MS} ms deadline`,
+  });
+  for (const signal of [null, "SIGKILL"]) {
+    assert.throws(() => classifyProbeClose({ ...success, signal, timedOut: true }), {
+      message: `UNDECIDED: host starved; child-process probe exceeded ${STALL_ALLOWANCE_MS} ms`,
+    });
+  }
+});
+
 async function canCreateChildProcess() {
   if (childProcessAvailable !== undefined) return childProcessAvailable;
-  childProcessAvailable = await new Promise((resolve, reject) => {
+  const close = await new Promise((resolve) => {
     let child;
     try {
       child = spawn(process.execPath, [
@@ -63,25 +91,28 @@ async function canCreateChildProcess() {
         "process.stdout.write('fixture-026-child-probe')",
       ], {
         env: {}, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
-        timeout: STALL_ALLOWANCE_MS, killSignal: "SIGKILL",
       });
     } catch {
-      resolve(false);
+      resolve(null);
       return;
     }
-    child.once("error", () => resolve(false));
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, STALL_ALLOWANCE_MS);
+    child.once("error", () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
     const stdout = [];
     child.stdout.on("data", (chunk) => stdout.push(chunk));
     child.once("close", (code, signal) => {
-      // A probe killed at the stall allowance is a starved host, not a sandbox
-      // that denies children; skipping would pass the child tests vacuously.
-      if (signal === "SIGKILL") {
-        reject(new Error(`UNDECIDED: host starved; child-process probe exceeded ${STALL_ALLOWANCE_MS} ms`));
-        return;
-      }
-      resolve(code === 0 && Buffer.concat(stdout).toString("utf8") === "fixture-026-child-probe");
+      clearTimeout(timer);
+      resolve({ code, signal, timedOut, stdout: Buffer.concat(stdout).toString("utf8") });
     });
   });
+  childProcessAvailable = close !== null && classifyProbeClose(close);
   return childProcessAvailable;
 }
 
@@ -186,16 +217,25 @@ function abstentionMessage({
     + `loadPerCpu=${loadPerCpu} starved=${starved}`;
 }
 
-async function timedChild(options) {
-  const start = performance.now();
-  const isolated = await runFixture026RsdT02IsolatedPolicyPacket(options);
-  return { isolated, elapsedMs: performance.now() - start };
+function hostLoadPerCpu() {
+  return os.loadavg()[0] / os.availableParallelism();
 }
 
-function requireCompleted({ isolated, elapsedMs }, { phase, recipeId, deadlineMs, baselineMs }) {
+async function timedChild(options) {
+  const startLoadPerCpu = hostLoadPerCpu();
+  const start = performance.now();
+  const isolated = await runFixture026RsdT02IsolatedPolicyPacket(options);
+  return { isolated, elapsedMs: performance.now() - start, startLoadPerCpu };
+}
+
+function requireCompleted(
+  { isolated, elapsedMs, startLoadPerCpu },
+  { phase, recipeId, deadlineMs, baselineMs },
+  endLoadPerCpu = hostLoadPerCpu(),
+) {
   if (isolated.status === "completed") return isolated;
   const reasonCodes = isolated.active_arm_outcomes.flatMap((arm) => arm.reason_codes);
-  const loadPerCpu = os.loadavg()[0] / os.availableParallelism();
+  const loadPerCpu = Math.max(startLoadPerCpu, endLoadPerCpu);
   // A calibration child that needs the whole stall allowance is starved at any
   // load; a crash or malformed response stays a plain failure in both phases.
   const starved = phase === "calibration"
@@ -219,18 +259,18 @@ async function childBaseline({ config, policyConfigUtf8 }, packet) {
   }
   return {
     baselineMs: Math.ceil(samples.toSorted((a, b) => a - b)[Math.floor(CHILD_SAMPLES / 2)]),
-    calibrationMs: Math.ceil(samples.reduce((sum, ms) => sum + ms, 0)),
     samplesMs: samples.map(Math.ceil),
   };
 }
 
-function derivedChildDeadline({ baselineMs, calibrationMs, packetCount }) {
+function derivedChildDeadline({ baselineMs, spentMs, packetCount }) {
   const deadlineMs = Math.ceil(baselineMs * CHILD_MARGIN) + STALL_ALLOWANCE_MS;
-  return { deadlineMs, decidable: calibrationMs + packetCount * deadlineMs < RESULT_TEST_TIMEOUT_MS };
+  return { deadlineMs, decidable: spentMs + packetCount * deadlineMs < RESULT_TEST_TIMEOUT_MS };
 }
 
-function childDeadlineMs(t, { baselineMs, calibrationMs, samplesMs }, packetCount) {
-  const { deadlineMs, decidable } = derivedChildDeadline({ baselineMs, calibrationMs, packetCount });
+function childDeadlineMs(t, { baselineMs, samplesMs }, packetCount, start) {
+  const spentMs = performance.now() - start;
+  const { deadlineMs, decidable } = derivedChildDeadline({ baselineMs, spentMs, packetCount });
   if (!decidable) {
     assert.fail(`UNDECIDED: host starved; measured baseline ${baselineMs} ms; deadline ${deadlineMs} ms; test bound ${RESULT_TEST_TIMEOUT_MS} ms`);
   }
@@ -261,7 +301,8 @@ test("abstention diagnostics identify the packet, sorted reasons, timing and hos
 
 test("only a calibration timeout reports starvation; a calibration crash fails plainly", () => {
   const run = (reasonCode) => ({
-    isolated: { status: "abstained", active_arm_outcomes: [{ reason_codes: [reasonCode] }] }, elapsedMs: 10,
+    isolated: { status: "abstained", active_arm_outcomes: [{ reason_codes: [reasonCode] }] },
+    elapsedMs: 10, startLoadPerCpu: 1,
   });
   const where = { phase: "calibration", recipeId: "M-I1-FFL", deadlineMs: STALL_ALLOWANCE_MS, baselineMs: "unavailable" };
   assert.throws(() => requireCompleted(run("isolated-policy-child-crash"), where),
@@ -270,13 +311,25 @@ test("only a calibration timeout reports starvation; a calibration crash fails p
     { message: /^UNDECIDED: host starved; phase=calibration .* starved=true$/u });
 });
 
+test("result timeouts use the higher load at child start or completion", () => {
+  const isolated = { status: "abstained", active_arm_outcomes: [{ reason_codes: ["isolated-policy-timeout"] }] };
+  const where = { phase: "result", recipeId: "M-I1-FFL", deadlineMs: 36_000, baselineMs: 1000 };
+  const run = { isolated, elapsedMs: 36_011, startLoadPerCpu: 1 };
+  assert.throws(() => requireCompleted({ ...run, startLoadPerCpu: 3 }, where, 1),
+    { message: /^UNDECIDED: host starved; phase=result .* loadPerCpu=3 starved=true$/u });
+  assert.throws(() => requireCompleted(run, where, 3),
+    { message: /^UNDECIDED: host starved; phase=result .* loadPerCpu=3 starved=true$/u });
+  assert.throws(() => requireCompleted(run, where, 1),
+    { message: /^phase=result .* loadPerCpu=1 starved=false$/u });
+});
+
 test("derived child deadline requires room below the result test bound", () => {
-  assert.deepEqual(derivedChildDeadline({ baselineMs: 1000, calibrationMs: 3000, packetCount: 5 }), {
+  assert.deepEqual(derivedChildDeadline({ baselineMs: 1000, spentMs: 3000, packetCount: 5 }), {
     deadlineMs: 36_000, decidable: true,
   });
-  const boundary = { baselineMs: 4500, calibrationMs: 15_000, packetCount: 5 };
+  const boundary = { baselineMs: 4500, spentMs: 15_000, packetCount: 5 };
   assert.deepEqual(derivedChildDeadline(boundary), { deadlineMs: 57_000, decidable: false });
-  assert.equal(derivedChildDeadline({ ...boundary, calibrationMs: 14_999 }).decidable, true);
+  assert.equal(derivedChildDeadline({ ...boundary, spentMs: 14_999 }).decidable, true);
 });
 
 async function resultChild(packet, { config, policyConfigUtf8 }, recipeId, deadlineMs, baselineMs) {
@@ -299,17 +352,25 @@ function expectedResponses(packet, { config, policyConfigUtf8, inventory }) {
 testWithHostDeadline("all five packets preserve nine-arm base-v2 results across the fresh isolated child", {
   timeout: RESULT_TEST_TIMEOUT_MS,
 }, async (context) => {
+  const start = performance.now();
   if (!(await canCreateChildProcess())) {
     context.skip("host sandbox denies child-process creation; run outside that sandbox");
     return;
   }
   const inputs = await policyInputs();
   const { inventory, policyConfigUtf8 } = inputs;
-  const calibration = await childBaseline(inputs, packetFor(FIXTURE_026_RSD_T02_RECIPES[0].recipe_id));
-  const deadlineMs = childDeadlineMs(context, calibration, FIXTURE_026_RSD_T02_RECIPES.length);
-  for (const recipe of FIXTURE_026_RSD_T02_RECIPES) {
-    const packet = packetFor(recipe.recipe_id);
-    const isolated = await resultChild(packet, inputs, recipe.recipe_id, deadlineMs, calibration.baselineMs);
+  const configSha256 = sha256(Buffer.from(policyConfigUtf8, "utf8"));
+  const cases = FIXTURE_026_RSD_T02_RECIPES.map(({ recipe_id: recipeId }) => {
+    const packet = packetFor(recipeId);
+    return {
+      recipeId, packet, responses: expectedResponses(packet, inputs),
+      packetSha256: sha256(Buffer.from(canonicalize(packet), "utf8")),
+    };
+  });
+  const calibration = await childBaseline(inputs, cases[0].packet);
+  const deadlineMs = childDeadlineMs(context, calibration, cases.length, start);
+  for (const { recipeId, packet, responses, packetSha256 } of cases) {
+    const isolated = await resultChild(packet, inputs, recipeId, deadlineMs, calibration.baselineMs);
     assert.deepEqual(isolated.active_arm_outcomes, []);
     assert.equal(isolated.receipt.execution_mode, "fresh-node-child-hardened-vm");
     assert.equal(isolated.receipt.bundle_sha256, inventory.bundle_sha256);
@@ -320,11 +381,11 @@ testWithHostDeadline("all five packets preserve nine-arm base-v2 results across 
       "random_exposed_to_policy", "evaluator_exposed_to_policy",
       "dynamic_code_generation_exposed_to_policy",
     ]) assert.equal(isolated.receipt[field], false, field);
-    assert.deepEqual(isolated.responses, expectedResponses(packet, inputs));
+    assert.deepEqual(isolated.responses, responses);
     for (const response of isolated.responses) {
       assert.equal(response.policy_artifact_sha256, inventory.bundle_sha256);
-      assert.equal(response.policy_config_sha256, sha256(Buffer.from(policyConfigUtf8, "utf8")));
-      assert.equal(response.system_packet_sha256, sha256(Buffer.from(canonicalize(packet), "utf8")));
+      assert.equal(response.policy_config_sha256, configSha256);
+      assert.equal(response.system_packet_sha256, packetSha256);
     }
   }
 });
@@ -420,9 +481,81 @@ test("crash, malformed, output overflow, replay, and work overflow classify fail
   }).reason, "isolated-policy-malformed-response");
 });
 
+async function boundedIo(operation, label, timeoutMs = TEMP_IO_TIMEOUT_MS) {
+  let timer;
+  try {
+    return await Promise.race([
+      operation(AbortSignal.timeout(timeoutMs)),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`temporary I/O deadline: ${label}`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function withTemporaryDirectory(prefix, run, remove = rm) {
+  const directory = await boundedIo(() => mkdtemp(prefix), "create temporary directory");
+  let completed = false;
+  try {
+    await run(directory);
+    completed = true;
+  } finally {
+    await boundedIo(() => remove(directory, { recursive: true, force: true }), "remove temporary directory")
+      .catch((error) => {
+        if (completed) throw error;
+      });
+  }
+}
+
+async function wrapperExecutable(filePath) {
+  try {
+    await boundedIo(() => access(filePath, constants.X_OK), "check wrapper execute permission");
+    return true;
+  } catch (error) {
+    if (error.code === "EACCES") return false;
+    throw error;
+  }
+}
+
+test("wrapper execution requires execute permission", { skip: process.platform === "win32" }, async () => {
+  // The ignored checkout tmp/ can host the executable control even when the system temp directory is noexec.
+  const parent = path.resolve("tmp");
+  await boundedIo(() => mkdir(parent, { recursive: true }), "create checkout tmp directory");
+  await withTemporaryDirectory(path.join(parent, "fixture-026-mode-"), async (directory) => {
+    for (const mode of [0o644, 0o755]) {
+      const filePath = path.join(directory, mode.toString(8));
+      await boundedIo((signal) => writeFile(filePath, "", { mode, signal }), "write mode fixture");
+      assert.equal(await wrapperExecutable(filePath), mode === 0o755);
+    }
+    await assert.rejects(wrapperExecutable(path.join(directory, "missing")), { code: "ENOENT" });
+  });
+});
+
+test("temporary I/O deadline identifies the stalled operation", { timeout: 5000 }, async () => {
+  await assert.rejects(boundedIo(() => new Promise(() => {}), "planted stall", 50),
+    { message: "temporary I/O deadline: planted stall" });
+});
+
+test("temporary cleanup reports its own failure unless the test already failed", async () => {
+  const prefix = path.join(os.tmpdir(), "fixture-026-cleanup-");
+  const cleanupError = new Error("planted cleanup failure");
+  const testError = new Error("planted test failure");
+  const removeThenFail = async (directory, options) => {
+    await rm(directory, options);
+    throw cleanupError;
+  };
+  await assert.rejects(withTemporaryDirectory(prefix, () => {}, removeThenFail),
+    (error) => error === cleanupError);
+  await assert.rejects(withTemporaryDirectory(prefix, () => { throw testError; }, removeThenFail),
+    (error) => error === testError);
+});
+
 testWithHostDeadline("a fresh child stalled past the production deadline completes under the derived deadline", {
   timeout: RESULT_TEST_TIMEOUT_MS,
 }, async (context) => {
+  const start = performance.now();
   if (process.platform === "win32") return context.skip("slow-node requires POSIX shebang execution");
   if (!(await canCreateChildProcess())) return context.skip("host sandbox denies child-process creation");
   if (typeof process.execve !== "function") return context.skip("slow-node requires process.execve");
@@ -431,36 +564,37 @@ testWithHostDeadline("a fresh child stalled past the production deadline complet
   if (Buffer.byteLength(shebang) > 255) return context.skip("slow-node shebang exceeds 255 bytes");
   if (/\s/u.test(realNode)) return context.skip("slow-node shebang cannot carry whitespace in the node path");
 
-  const inputs = await policyInputs();
-  const recipeId = FIXTURE_026_RSD_T02_RECIPES[0].recipe_id;
-  const packet = packetFor(recipeId);
-  const calibration = await childBaseline(inputs, packet);
-  const deadlineMs = childDeadlineMs(context, calibration, 1);
-  assert.ok(deadlineMs > PLANTED_STALL_MS + 2 * calibration.baselineMs);
-
-  const directory = await mkdtemp(path.resolve(os.tmpdir(), "fixture-026-stall-"));
-  const wrapper = path.join(directory, "slow-node");
-  const nodeLiteral = JSON.stringify(realNode);
-  let control;
-  let isolated;
-  try {
+  await withTemporaryDirectory(path.resolve(os.tmpdir(), "fixture-026-stall-"), async (directory) => {
+    const wrapper = path.join(directory, "slow-node");
+    const nodeLiteral = JSON.stringify(realNode);
     const script = `${shebang}\n`
       + `setTimeout(() => process.execve(${nodeLiteral}, [${nodeLiteral}, ...process.argv.slice(2)], {}), ${PLANTED_STALL_MS});\n`;
-    await writeFile(wrapper, script, { mode: 0o755 });
-    process.execPath = wrapper;
+    await boundedIo((signal) => writeFile(wrapper, script, { mode: 0o755, signal }), "write stalled child wrapper");
+    if (!(await wrapperExecutable(wrapper))) {
+      return context.skip("temporary directory does not permit execution (noexec); planted stall needs an executable wrapper");
+    }
+    const inputs = await policyInputs();
+    const recipeId = FIXTURE_026_RSD_T02_RECIPES[0].recipe_id;
+    const packet = packetFor(recipeId);
+    const responses = expectedResponses(packet, inputs);
+    const calibration = await childBaseline(inputs, packet);
+    const deadlineMs = childDeadlineMs(context, calibration, 1, start);
+    assert.ok(deadlineMs > PLANTED_STALL_MS + 2 * calibration.baselineMs);
     const { config, policyConfigUtf8 } = inputs;
-    [control, isolated] = await Promise.all([
-      runFixture026RsdT02IsolatedPolicyPacket({ packet, config, policyConfigUtf8 }),
-      resultChild(packet, inputs, recipeId, deadlineMs, calibration.baselineMs),
-    ]);
-  } finally {
-    process.execPath = realNode;
-    await rm(directory, { recursive: true, force: true });
-  }
+    process.execPath = wrapper;
+    try {
+      const [control, isolated] = await Promise.all([
+        runFixture026RsdT02IsolatedPolicyPacket({ packet, config, policyConfigUtf8 }),
+        resultChild(packet, inputs, recipeId, deadlineMs, calibration.baselineMs),
+      ]);
+      assert.equal(control.status, "abstained");
+      assert.deepEqual(control.active_arm_outcomes.map((row) => row.reason_codes),
+        FIXTURE_026_RSD_T02_ACTIVE_ARM_IDS.map(() => ["isolated-policy-timeout"]));
+      assert.deepEqual(isolated.responses, responses);
+      assert.equal(isolated.receipt.execution_mode, "fresh-node-child-hardened-vm");
+    } finally {
+      process.execPath = realNode;
+    }
+  });
   assert.equal(process.execPath, realNode);
-  assert.equal(control.status, "abstained");
-  assert.deepEqual(control.active_arm_outcomes.map((row) => row.reason_codes),
-    FIXTURE_026_RSD_T02_ACTIVE_ARM_IDS.map(() => ["isolated-policy-timeout"]));
-  assert.deepEqual(isolated.responses, expectedResponses(packet, inputs));
-  assert.equal(isolated.receipt.execution_mode, "fresh-node-child-hardened-vm");
 });
