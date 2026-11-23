@@ -6,13 +6,13 @@ import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { runCli as defaultRunIngest } from "./research-watch-ingest.mjs";
+import { gitEnvironment } from "./lib/repository-inventory.mjs";
 import { parseStrictJson } from "./lib/strict-json.mjs";
 
-const defaultOwner = "cordanaLLM";
-const defaultRepo = "20-watts-was-enough";
 const defaultBranch = "research-watch/ingest";
 const baseBranch = "main";
-const defaultRepoRegex = /^[a-zA-Z0-9-]+\/[a-zA-Z0-9._-]+$/u;
+const repositoryPattern = /^[a-zA-Z0-9-]+\/[a-zA-Z0-9._-]+$/u;
+const githubOriginPrefixes = ["https://github.com/", "git@github.com:", "ssh://git@github.com/"];
 const maximumPayloadBytes = 1_048_576; // 1 MiB
 const maximumTimeoutMs = 15_000; // 15 seconds
 const maxRetries = 3;
@@ -155,33 +155,32 @@ async function resolveToken({ tokenFileArg, env, readFileImpl }) {
   return { ok: true, token: content };
 }
 
-function parseArgs(args) {
-  const options = {
-    dryRun: false,
-    tokenFile: undefined,
-    repo: `${defaultOwner}/${defaultRepo}`,
-  };
+function argumentValue(args, index) {
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`Invalid ${args[index]} argument`);
+  }
+  return value;
+}
 
+function parseArgs(args) {
+  const options = { dryRun: false, printRepository: false };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "--dry-run") {
       options.dryRun = true;
+    } else if (arg === "--print-repository") {
+      options.printRepository = true;
     } else if (arg === "--token-file") {
-      if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
-        throw new Error("Invalid --token-file argument");
-      }
-      options.tokenFile = args[++i];
+      options.tokenFile = argumentValue(args, i++);
     } else if (arg === "--repo") {
-      if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
-        throw new Error("Invalid --repo argument");
-      }
-      const repoVal = args[++i];
-      if (!defaultRepoRegex.test(repoVal)) {
+      const repoVal = argumentValue(args, i++);
+      if (!repositoryPattern.test(repoVal)) {
         throw new Error("Invalid repository name format");
       }
       options.repo = repoVal;
     } else {
-      throw new Error(`Invalid CLI argument: ${arg}`);
+      throw new Error("Invalid CLI argument");
     }
   }
 
@@ -458,17 +457,33 @@ function signoffIsValid(signoff) {
 
 const runGitConfig = promisify(execFile);
 
+async function readGitConfig(root, key) {
+  const { stdout } = await runGitConfig("git", ["config", "--get", key], {
+    cwd: root,
+    env: gitEnvironment(root),
+    timeout: gitConfigTimeoutMs,
+    maxBuffer: gitConfigMaxBytes,
+    encoding: "utf8",
+  });
+  return stdout;
+}
+
 export async function readGitIdentity({ root }) {
-  const read = async (key) => {
-    const { stdout } = await runGitConfig("git", ["config", "--get", key], {
-      cwd: root,
-      timeout: gitConfigTimeoutMs,
-      maxBuffer: gitConfigMaxBytes,
-      encoding: "utf8",
-    });
-    return stdout.replace(/\r?\n$/u, "");
-  };
+  const read = async (key) => (await readGitConfig(root, key)).replace(/\r?\n$/u, "");
   return { name: await read("user.name"), email: await read("user.email") };
+}
+
+async function resolveRepository(override, readOrigin, root) {
+  if (override !== undefined) return override;
+  try {
+    const origin = await readOrigin({ root });
+    const prefix = githubOriginPrefixes.find((value) => origin.startsWith(value));
+    if (!prefix) return null;
+    const repository = origin.slice(prefix.length).replace(/\r?\n$/u, "").replace(/\.git$/u, "");
+    return repositoryPattern.test(repository) ? repository : null;
+  } catch {
+    return null;
+  }
 }
 
 async function obtainSignoff({ readIdentity, root }) {
@@ -562,20 +577,6 @@ async function executeMutations({
   }
 }
 
-function mapPublicationError(error) {
-  if (
-    error.message?.startsWith("Invalid additions allow-list") ||
-    error.message?.startsWith("File exceeds payload") ||
-    error.message?.startsWith("Combined payload size")
-  ) {
-    throw error;
-  }
-  return {
-    exitCode: 1,
-    message: "Research-watch publication failed; changes were not published. Check credentials, branch state and network.",
-  };
-}
-
 export async function main({
   args = process.argv.slice(2),
   env = process.env,
@@ -585,10 +586,16 @@ export async function main({
   readFile = fsReadFile,
   sleep = delay,
   readIdentity = readGitIdentity,
+  readOrigin = ({ root }) => readGitConfig(root, "remote.origin.url"),
   additions: customAdditions = null,
 } = {}) {
   const deadline = Date.now() + totalDeadlineMs;
   const cliOptions = parseArgs(args);
+  const repository = await resolveRepository(cliOptions.repo, readOrigin, root);
+  if (!repository) {
+    return { exitCode: 2, message: "Research-watch target repository unresolved: origin is not a GitHub repository URL; pass --repo owner/name." };
+  }
+  if (cliOptions.printRepository) return { exitCode: 0, message: repository };
 
   const tokenState = await obtainToken({ cliOptions, env, readFile });
   if (!tokenState.ok) return tokenState.result;
@@ -601,7 +608,7 @@ export async function main({
   if (!ingestPhase.ok) return { exitCode: ingestPhase.exitCode, message: ingestPhase.message };
 
   const { fileContents, publicLeadsCount, fetchedAt } = await loadAndValidateFiles(root, readFile);
-  const [owner, repo] = cliOptions.repo.split("/");
+  const [owner, repo] = repository.split("/");
 
   const inspectResult = await inspectRemoteRepository({ owner, repo, token, fetchImpl, sleep, deadline });
   if (!inspectResult.ok) return inspectResult.error;
@@ -621,22 +628,26 @@ export async function main({
       owner, repo, repoData: inspectResult.repoData, plan: actionPlan.plan,
       publicLeadsCount, fetchedAt, signoff: signoffState.signoff, additions, context,
     });
-  } catch (error) {
-    return mapPublicationError(error);
+  } catch {
+    return { exitCode: 1, message: "Research-watch publication failed in the GitHub write phase; check credentials, branch state and network." };
   }
 
   return { exitCode: 0, message: `Research-watch leads published: ${publicLeadsCount} public leads.` };
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
-if (invokedPath === import.meta.url) {
+export async function runCli({ args = process.argv.slice(2), mainImpl = main, stdout = console.log, stderr = console.error } = {}) {
+  let result;
   try {
-    const result = await main();
-    if (result.message) console.error(result.message);
-    process.exitCode = result.exitCode;
+    result = await mainImpl({ args });
   } catch (error) {
-    const field = /^Invalid [a-zA-Z .:_]+$/u.test(error.message) ? ` ${error.message}.` : "";
-    console.error(`Research-watch publication failed; changes were not published.${field} Check credentials, branch state and network.`);
-    process.exitCode = 1;
+    const field = /^Invalid [a-zA-Z .:_]+$/u.test(error?.message) ? ` ${error.message}.` : "";
+    stderr(`Research-watch publication stopped by an unexpected error before the GitHub write phase; changes were not published.${field}`);
+    return 1;
   }
+  const print = result.exitCode === 0 && args.includes("--print-repository") ? stdout : stderr;
+  if (result.message) print(result.message);
+  return result.exitCode;
 }
+
+const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
+if (invokedPath === import.meta.url) process.exitCode = await runCli();
