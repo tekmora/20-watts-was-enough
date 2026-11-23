@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { sha256Hex } from "./checkpoint-ledger.mjs";
 
 const LOCK_DOCUMENT_MAX_BYTES = 4096;
+export const OUTPUT_LOCK_IO_TIMEOUT_MS = 30000;
 
 class OutputLockDeadline extends Error {}
 
@@ -33,9 +34,12 @@ async function cleanupFailedLock(handle, lockPath, timeoutMs, removeLock, error)
 }
 
 async function openWithLateCleanup(operation, label, timeoutMs, cleanupLateHandle) {
-  const pending = Promise.resolve().then(operation);
+  let pending;
   try {
-    return await lockIo(() => pending, label, timeoutMs);
+    return await lockIo(() => {
+      pending = Promise.resolve().then(operation);
+      return pending;
+    }, label, timeoutMs);
   } catch (error) {
     if (error instanceof OutputLockDeadline) {
       void pending.then(
@@ -70,7 +74,7 @@ async function readLockDocument(lockPath, artifact, timeoutMs, openLock) {
   }
 }
 
-export async function acquireLock(directory, artifact, timeoutMs = 30000,
+export async function acquireLock(directory, artifact, timeoutMs = OUTPUT_LOCK_IO_TIMEOUT_MS,
   { open: openLock = open, rm: removeLock = rm } = {}) {
   const lockPath = `${directory}.${artifact}.lock`;
   const token = randomBytes(32).toString("hex");
@@ -84,16 +88,16 @@ export async function acquireLock(directory, artifact, timeoutMs = 30000,
     throw error;
   }
   return Object.freeze({
-    async retain() {
-      await lockIo(() => handle.close(), `close ${lockPath}`, timeoutMs);
+    async retain({ timeoutMs: callTimeoutMs = timeoutMs } = {}) {
+      await lockIo(() => handle.close(), `close ${lockPath}`, callTimeoutMs);
     },
-    async release() {
-      const document = await readLockDocument(lockPath, artifact, timeoutMs, openLock);
+    async release({ timeoutMs: callTimeoutMs = timeoutMs } = {}) {
+      const document = await readLockDocument(lockPath, artifact, callTimeoutMs, openLock);
       if (document.token_sha256 !== sha256Hex(token)) {
         throw new Error(`Fixture ${artifact.slice(8)} lock ownership changed.`);
       }
-      await lockIo(() => handle.close(), `close ${lockPath}`, timeoutMs);
-      await lockIo(() => removeLock(lockPath), `remove ${lockPath}`, timeoutMs);
+      await lockIo(() => handle.close(), `close ${lockPath}`, callTimeoutMs);
+      await lockIo(() => removeLock(lockPath), `remove ${lockPath}`, callTimeoutMs);
     },
   });
 }
