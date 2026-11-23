@@ -3,8 +3,11 @@ import { constants } from "node:fs";
 import { open, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { acquireLock } from "../lib/output-lock.mjs";
+import { acquireLock, OUTPUT_LOCK_IO_TIMEOUT_MS } from "../lib/output-lock.mjs";
 import { cleanup, temporaryOutput } from "../lib/runner-test-helpers.mjs";
+
+const RELEASE_DEADLINE_MS = 1000;
+const SLOW_SYNC_MS = 2 * RELEASE_DEADLINE_MS;
 
 test("shared fixture-019 lock keeps its path, document bytes and ownership error", async () => {
   const fixture = await temporaryOutput("fixture-020-shared-lock-");
@@ -59,7 +62,7 @@ test("retain closes the owner handle and preserves lock bytes and exclusion", as
   const file = `${fixture.output}.fixture-020.lock`;
   const state = { closeCalled: false };
   try {
-    const lock = await acquireLock(fixture.output, "fixture-020", 1000, {
+    const lock = await acquireLock(fixture.output, "fixture-020", OUTPUT_LOCK_IO_TIMEOUT_MS, {
       open: retainingLockOpen(state), rm: () => assert.fail("retain must not remove the lock"),
     });
     const original = await readFile(file);
@@ -82,7 +85,7 @@ test("retain rejects owner close failure and preserves the lock bytes", async ()
   const state = {};
   const failure = new Error("injected retain close failure");
   try {
-    const lock = await acquireLock(fixture.output, "fixture-020", 1000, {
+    const lock = await acquireLock(fixture.output, "fixture-020", OUTPUT_LOCK_IO_TIMEOUT_MS, {
       open: retainingLockOpen(state, () => { throw failure; }),
     });
     const original = await readFile(file);
@@ -95,18 +98,18 @@ test("retain rejects owner close failure and preserves the lock bytes", async ()
   }
 });
 
-test("retain rejects owner close timeout and preserves the lock bytes", async () => {
+test("retain rejects owner close timeout and preserves the lock bytes", { timeout: 15000 }, async () => {
   const fixture = await temporaryOutput("fixture-020-lock-retain-timeout-");
   const file = `${fixture.output}.fixture-020.lock`;
   const state = {};
   let finishClose;
   const closeGate = new Promise((resolve) => { finishClose = resolve; });
   try {
-    const lock = await acquireLock(fixture.output, "fixture-020", 1000, {
+    const lock = await acquireLock(fixture.output, "fixture-020", OUTPUT_LOCK_IO_TIMEOUT_MS, {
       open: retainingLockOpen(state, () => closeGate),
     });
     const original = await readFile(file);
-    await assert.rejects(() => lock.retain(), { message: `Output lock deadline: close ${file}.` });
+    await assert.rejects(() => lock.retain({ timeoutMs: 1000 }), { message: `Output lock deadline: close ${file}.` });
     assert.equal(state.closeCalled, true);
     assert.deepEqual(await readFile(file), original);
   } finally {
@@ -121,7 +124,7 @@ test("failed lock write removes its file, preserves the error and permits anothe
   const failure = new Error("injected lock write failure");
   const file = fixture.output + ".fixture-020.lock";
   try {
-    await assert.rejects(() => acquireLock(fixture.output, "fixture-020", 1000,
+    await assert.rejects(() => acquireLock(fixture.output, "fixture-020", OUTPUT_LOCK_IO_TIMEOUT_MS,
       { open: failingLockOpen("write", failure) }), (error) => error === failure);
     await assert.rejects(() => readFile(file), { code: "ENOENT" });
     const lock = await acquireLock(fixture.output, "fixture-020");
@@ -134,7 +137,7 @@ test("failed lock sync removes its file and preserves the original error", async
   const fixture = await temporaryOutput("fixture-020-lock-sync-failure-");
   const failure = new Error("injected lock sync failure");
   try {
-    await assert.rejects(() => acquireLock(fixture.output, "fixture-020", 1000,
+    await assert.rejects(() => acquireLock(fixture.output, "fixture-020", OUTPUT_LOCK_IO_TIMEOUT_MS,
       { open: failingLockOpen("sync", failure) }), (error) => error === failure);
     await assert.rejects(() => readFile(fixture.output + ".fixture-020.lock"), { code: "ENOENT" });
   } finally { await cleanup(fixture); }
@@ -148,7 +151,7 @@ test("failed lock cleanup attempts close and removal and attaches every failure"
   const file = fixture.output + ".fixture-020.lock";
   let removed = false;
   try {
-    await assert.rejects(() => acquireLock(fixture.output, "fixture-020", 1000, {
+    await assert.rejects(() => acquireLock(fixture.output, "fixture-020", OUTPUT_LOCK_IO_TIMEOUT_MS, {
       open: failingLockOpen("write", failure, closeFailure),
       rm: async (...args) => { await rm(...args); removed = true; throw removeFailure; },
     }), (error) => {
@@ -247,17 +250,30 @@ test("release accepts a valid lock document padded to exactly 4096 bytes", async
     const boundary = original.trimEnd().padEnd(4095, " ") + "\n";
     assert.equal(Buffer.byteLength(boundary), 4096);
     await writeFile(file, boundary);
-    await lock.release();
+    await lock.release({});
     await assert.rejects(() => readFile(file), { code: "ENOENT" });
   } finally { await cleanup(fixture); }
 });
 
-function delayedReadOpen(state, openFailure, closeFailure) {
+function slowSyncOwner(owner, state) {
+  return {
+    writeFile: (...args) => owner.writeFile(...args),
+    sync: async () => {
+      state.syncStart = performance.now();
+      await delay(SLOW_SYNC_MS);
+      await owner.sync();
+      state.syncEnd = performance.now();
+    },
+    close: () => owner.close(),
+  };
+}
+
+function delayedReadOpen(state, { openFailure, closeFailure, slowSync = false } = {}) {
   state.readGate = new Promise((resolve) => { state.openReadGate = resolve; });
   return async (...args) => {
     if (args[1] === "wx") {
       state.owner = await open(...args);
-      return state.owner;
+      return slowSync ? slowSyncOwner(state.owner, state) : state.owner;
     }
     assert.equal(args[1], constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const slowRead = state.slowRead;
@@ -294,11 +310,11 @@ async function runLateReaderDeadlineCase({ prefix, state, open: openLock, settle
   const file = fixture.output + ".fixture-020.lock";
   let deadline;
   try {
-    const lock = await acquireLock(fixture.output, "fixture-020", 1000, { open: openLock });
+    const lock = await acquireLock(fixture.output, "fixture-020", OUTPUT_LOCK_IO_TIMEOUT_MS, { open: openLock });
     const original = await readFile(file);
-    await assert.rejects(() => lock.release(), (error) => {
+    await assert.rejects(() => lock.release({ timeoutMs: RELEASE_DEADLINE_MS }), (error) => {
       deadline = error;
-      return /Output lock deadline/.test(error.message);
+      return error.message === `Output lock deadline: open read ${file}.`;
     });
     state.openReadGate();
     await waitUntil(() => settled(deadline));
@@ -317,12 +333,12 @@ async function runLateReaderDeadlineCase({ prefix, state, open: openLock, settle
 
 for (const closeFailure of [null, new Error("injected late reader close failure")]) {
   const outcome = closeFailure ? "records late reader close failure" : "closes late reader";
-  test(`release deadline ${outcome} and preserves owner bytes`, async () => {
+  test(`release deadline ${outcome} and preserves owner bytes`, { timeout: 15000 }, async () => {
     const state = { slowRead: true, closed: false };
     await runLateReaderDeadlineCase({
       prefix: "fixture-020-late-reader-",
       state,
-      open: delayedReadOpen(state, null, closeFailure),
+      open: delayedReadOpen(state, { closeFailure }),
       settled: (deadline) => state.closed && (!closeFailure || deadline.cleanupErrors?.includes(closeFailure)),
       check: (deadline) => {
         if (closeFailure) assert.deepEqual(deadline.cleanupErrors, [closeFailure]);
@@ -337,8 +353,39 @@ test("release deadline records late reader open failure and preserves owner byte
   await runLateReaderDeadlineCase({
     prefix: "fixture-020-late-reader-failure-",
     state,
-    open: delayedReadOpen(state, failure),
+    open: delayedReadOpen(state, { openFailure: failure }),
     settled: (deadline) => deadline.lateOpenError === failure,
     check: (deadline) => assert.equal(deadline.lateOpenError, failure),
   });
+});
+
+test("slow acquire sync completes before the release reader deadline", { timeout: 15000 }, async () => {
+  const state = { slowRead: true, closed: false };
+  await runLateReaderDeadlineCase({
+    prefix: "fixture-020-slow-sync-",
+    state,
+    open: delayedReadOpen(state, { slowSync: true }),
+    settled: () => state.closed,
+    check: () => assert.ok(state.syncEnd - state.syncStart >= RELEASE_DEADLINE_MS),
+  });
+});
+
+test("release rejects a negative timeout before opening the reader and preserves owner bytes", async () => {
+  const fixture = await temporaryOutput("fixture-020-invalid-timeout-");
+  const file = fixture.output + ".fixture-020.lock";
+  let readerOpens = 0;
+  try {
+    const lock = await acquireLock(fixture.output, "fixture-020", OUTPUT_LOCK_IO_TIMEOUT_MS, {
+      open: (...args) => {
+        if (args[1] !== "wx") readerOpens += 1;
+        return open(...args);
+      },
+    });
+    const original = await readFile(file);
+    await assert.rejects(() => lock.release({ timeoutMs: -1 }), { name: "RangeError", code: "ERR_OUT_OF_RANGE" });
+    assert.equal(readerOpens, 0);
+    assert.deepEqual(await readFile(file), original);
+    await lock.release();
+    await assert.rejects(() => readFile(file), { code: "ENOENT" });
+  } finally { await cleanup(fixture); }
 });
