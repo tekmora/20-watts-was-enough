@@ -811,6 +811,34 @@ async function captureCli(args, mainImpl) {
   return { exitCode, ...output };
 }
 
+const preWriteDiagnostic = "Research-watch publication stopped by an unexpected error before the GitHub write phase; changes were not published.";
+
+for (const [name, args, field] of [
+  ["missing --repo value", ["--repo"], " Invalid --repo argument."],
+  ["missing --token-file value", ["--token-file"], " Invalid --token-file argument."],
+  ["flag as --repo value", ["--repo", "--dry-run"], " Invalid --repo argument."],
+  ["invalid repository name", ["--repo", "bad value!"], " Invalid repository name format."],
+]) {
+  test(name, async (t) => {
+    const unused = t.mock.fn(assert.fail);
+    const mainImpl = ({ args }) => main({
+      args, env: {}, readOrigin: unused, readFile: unused, readIdentity: unused,
+      runIngest: unused, fetchImpl: unused,
+    });
+    assert.deepEqual(await captureCli(args, mainImpl), {
+      exitCode: 1, stdout: [], stderr: [preWriteDiagnostic + field],
+    });
+    assert.equal(unused.mock.callCount(), 0);
+  });
+}
+
+test("option diagnostics outside the allow-list stay private", async () => {
+  for (const message of ["Invalid --repo argument /secret", "Invalid --dry-run argument"]) {
+    const result = await captureCli([], async () => { throw new Error(message); });
+    assert.deepEqual(result, { exitCode: 1, stdout: [], stderr: [preWriteDiagnostic] });
+  }
+});
+
 test("--print-repository writes only the target to stdout", async (t) => {
   const fix = await createFixture(t);
   const unused = t.mock.fn(assert.fail);
@@ -882,13 +910,12 @@ test("write failure after branch creation stays in the write phase", async (t) =
 });
 
 test("unexpected errors report the pre-write phase", async () => {
-  const prefix = "Research-watch publication stopped by an unexpected error before the GitHub write phase; changes were not published.";
   for (const [message, field] of [["remote private details", ""], ["Invalid source_links", " Invalid source_links."]]) {
     const result = await captureCli([], async () => { throw new Error(message); });
-    assert.deepEqual(result, { exitCode: 1, stdout: [], stderr: [prefix + field] });
+    assert.deepEqual(result, { exitCode: 1, stdout: [], stderr: [preWriteDiagnostic + field] });
   }
   assert.deepEqual(await captureCli(["private"], main), {
-    exitCode: 1, stdout: [], stderr: [prefix + " Invalid CLI argument."],
+    exitCode: 1, stdout: [], stderr: [preWriteDiagnostic + " Invalid CLI argument."],
   });
 });
 

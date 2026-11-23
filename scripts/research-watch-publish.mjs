@@ -12,6 +12,7 @@ import { parseStrictJson } from "./lib/strict-json.mjs";
 const defaultBranch = "research-watch/ingest";
 const baseBranch = "main";
 const repositoryPattern = /^[a-zA-Z0-9-]+\/[a-zA-Z0-9._-]+$/u;
+const optionValueDiagnostics = new Set(["--repo", "--token-file"].map((flag) => `Invalid ${flag} argument`));
 const githubOriginPrefixes = ["https://github.com/", "git@github.com:", "ssh://git@github.com/"];
 const maximumPayloadBytes = 1_048_576; // 1 MiB
 const maximumTimeoutMs = 15_000; // 15 seconds
@@ -635,12 +636,16 @@ export async function main({
   return { exitCode: 0, message: `Research-watch leads published: ${publicLeadsCount} public leads.` };
 }
 
+function diagnosticField(message) {
+  return optionValueDiagnostics.has(message) || /^Invalid [a-zA-Z .:_]+$/u.test(message) ? ` ${message}.` : "";
+}
+
 export async function runCli({ args = process.argv.slice(2), mainImpl = main, stdout = console.log, stderr = console.error } = {}) {
   let result;
   try {
     result = await mainImpl({ args });
   } catch (error) {
-    const field = /^Invalid [a-zA-Z .:_]+$/u.test(error?.message) ? ` ${error.message}.` : "";
+    const field = diagnosticField(error?.message);
     stderr(`Research-watch publication stopped by an unexpected error before the GitHub write phase; changes were not published.${field}`);
     return 1;
   }
