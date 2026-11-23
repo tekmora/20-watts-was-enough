@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { devNull } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { commitBody, main, readGitIdentity, validateAdditions } from "./research-watch-publish.mjs";
+import { commitBody, main, readGitIdentity, runCli, validateAdditions } from "./research-watch-publish.mjs";
 
+const fixtureReadOrigin = async () => "https://github.com/fixture-owner/fixture-repo.git";
 const instant = "2026-10-15T12:00:00Z";
 const defaultToken = "fixture-secret-token-xyz123";
 const fixtureIdentity = { name: "Fixture Maintainer", email: "maintainer@example.org" };
@@ -189,6 +191,7 @@ test("positive: no lead change exits 0 and performs zero mutations", async (t) =
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -214,6 +217,7 @@ test("positive: change + no branch -> createRef + commit + PR", async (t) => {
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -257,6 +261,7 @@ test("positive: branch + open PR -> commit only onto branch in place", async (t)
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -286,6 +291,7 @@ test("positive: open PR already carrying the leads -> no mutation", async (t) =>
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -310,6 +316,7 @@ test("positive: branch no PR -> reset + commit + PR", async (t) => {
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -365,6 +372,7 @@ test("negative: ingest failure exits with same code and publishes nothing", asyn
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -384,6 +392,7 @@ test("negative: token missing or unreadable exits 2 with fixed message", async (
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -397,6 +406,7 @@ test("negative: token missing or unreadable exits 2 with fixed message", async (
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -409,6 +419,7 @@ test("negative: token missing or unreadable exits 2 with fixed message", async (
     env: { GITHUB_TOKEN: "github_pat_env", GH_TOKEN: "github_pat_env" },
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -433,6 +444,7 @@ test("negative: token never appears in any output or thrown message", async (t) 
     env: {},
     fetchImpl: handlerErrors,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -451,6 +463,7 @@ test("negative: token never appears in any output or thrown message", async (t) 
     env: {},
     fetchImpl: handler500,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
     sleep: async () => {},
@@ -471,6 +484,7 @@ test("negative: >1 open PR exits 1", async (t) => {
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -491,6 +505,7 @@ test("negative: GraphQL errors array exits 1 without echoing message", async (t)
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -525,6 +540,7 @@ test("boundary: file exactly at 1 MiB cap is accepted", async (t) => {
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -555,6 +571,7 @@ test("boundary: cap+1 byte is rejected", async (t) => {
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   }), /payload size cap/u);
@@ -575,6 +592,7 @@ test("boundary: dry-run makes zero mutations and outputs plan", async (t) => {
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -598,6 +616,7 @@ test("token under CREDENTIALS_DIRECTORY admits systemd managed mode", async (t) 
     env: { CREDENTIALS_DIRECTORY: credDir },
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -631,6 +650,7 @@ test("retry recovers from transient 500 error", async (t) => {
     env: {},
     fetchImpl: retryHandler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
     sleep: async () => {},
@@ -653,6 +673,7 @@ test("custom additions parameter rejects extra paths during main call", async (t
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
     additions: [
@@ -674,6 +695,7 @@ test("positive: every published commit carries one Signed-off-by trailer from th
     env: {},
     fetchImpl: handler,
     runIngest: fix.runIngest,
+    readOrigin: fixtureReadOrigin,
     readIdentity: fix.readIdentity,
     root: fix.root,
   });
@@ -703,6 +725,7 @@ test("negative: missing or invalid sign-off identity exits 2 before ingest and m
       env: {},
       fetchImpl: handler,
       runIngest: async () => { ingestRuns += 1; return { exitCode: 0, message: "ingest ok" }; },
+      readOrigin: fixtureReadOrigin,
       readIdentity: fix.readIdentity,
       root: fix.root,
     });
@@ -724,11 +747,211 @@ test("boundary: commit body refuses an identity without a usable sign-off", () =
   assert.doesNotThrow(() => commitBody({ ...base, signoff: { name: "A".repeat(128), email: "a@b" } }));
 });
 
+function fixtureGit(root) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+  env.GIT_CONFIG_GLOBAL = devNull;
+  env.GIT_CONFIG_NOSYSTEM = "1";
+  return (...argv) => execFileSync("git", argv, { cwd: root, env, encoding: "utf8", timeout: 10_000 });
+}
+
 test("readGitIdentity reads user.name and user.email from the repository git config", async (t) => {
   const fix = await createFixture(t);
-  const git = (...argv) => execFileSync("git", ["-C", fix.root, ...argv], { encoding: "utf8", timeout: 10_000 });
+  const git = fixtureGit(fix.root);
   git("init", "-q");
   git("config", "user.name", "Fixture Maintainer");
   git("config", "user.email", "maintainer@example.org");
   assert.deepEqual(await readGitIdentity({ root: fix.root }), fixtureIdentity);
+});
+
+test("origin supplies GraphQL owner and name", async (t) => {
+  const fix = await createFixture(t);
+  const cases = [
+    ["https://github.com/fork/project", "fork", "project"],
+    ["git@github.com:another/research.git", "another", "research"],
+    ["ssh://git@github.com/my-org/r.e_p.git\n", "my-org", "r.e_p"],
+    ["https://github.com/o/r.git.git", "o", "r.git"],
+  ];
+  for (const [origin, owner, name] of cases) {
+    const { handler, calls } = mockGraphQLHandler({ remoteLeadsText: fix.leads });
+    const result = await main({
+      args: ["--token-file", fix.tokenPath], env: {}, root: fix.root,
+      readOrigin: async ({ root }) => {
+        assert.equal(root, fix.root);
+        return origin;
+      },
+      readIdentity: fix.readIdentity, runIngest: fix.runIngest, fetchImpl: handler,
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(calls[0].variables.owner, owner);
+    assert.equal(calls[0].variables.name, name);
+  }
+});
+
+test("--repo skips the origin lookup", async (t) => {
+  const fix = await createFixture(t);
+  const readOrigin = t.mock.fn(fixtureReadOrigin);
+  const { handler, calls } = mockGraphQLHandler({ remoteLeadsText: fix.leads });
+  const result = await main({
+    args: ["--repo", "override/target", "--token-file", fix.tokenPath], env: {}, root: fix.root,
+    readOrigin, readIdentity: fix.readIdentity, runIngest: fix.runIngest, fetchImpl: handler,
+  });
+  assert.equal(readOrigin.mock.callCount(), 0);
+  assert.equal(result.exitCode, 0);
+  assert.equal(calls[0].variables.owner, "override");
+  assert.equal(calls[0].variables.name, "target");
+});
+
+async function captureCli(args, mainImpl) {
+  const output = { stdout: [], stderr: [] };
+  const exitCode = await runCli({
+    args, mainImpl,
+    stdout: (line) => output.stdout.push(line),
+    stderr: (line) => output.stderr.push(line),
+  });
+  return { exitCode, ...output };
+}
+
+const preWriteDiagnostic = "Research-watch publication stopped by an unexpected error before the GitHub write phase; changes were not published.";
+
+for (const [name, args, field] of [
+  ["missing --repo value", ["--repo"], " Invalid --repo argument."],
+  ["missing --token-file value", ["--token-file"], " Invalid --token-file argument."],
+  ["flag as --repo value", ["--repo", "--dry-run"], " Invalid --repo argument."],
+  ["invalid repository name", ["--repo", "bad value!"], " Invalid repository name format."],
+]) {
+  test(name, async (t) => {
+    const unused = t.mock.fn(assert.fail);
+    const mainImpl = ({ args }) => main({
+      args, env: {}, readOrigin: unused, readFile: unused, readIdentity: unused,
+      runIngest: unused, fetchImpl: unused,
+    });
+    assert.deepEqual(await captureCli(args, mainImpl), {
+      exitCode: 1, stdout: [], stderr: [preWriteDiagnostic + field],
+    });
+    assert.equal(unused.mock.callCount(), 0);
+  });
+}
+
+test("option diagnostics outside the allow-list stay private", async () => {
+  for (const message of ["Invalid --repo argument /secret", "Invalid --dry-run argument"]) {
+    const result = await captureCli([], async () => { throw new Error(message); });
+    assert.deepEqual(result, { exitCode: 1, stdout: [], stderr: [preWriteDiagnostic] });
+  }
+});
+
+test("--print-repository writes only the target to stdout", async (t) => {
+  const fix = await createFixture(t);
+  const unused = t.mock.fn(assert.fail);
+  const mainImpl = ({ args }) => main({
+    args, env: {}, root: fix.root, readOrigin: fixtureReadOrigin,
+    readFile: unused, readIdentity: unused, runIngest: unused, fetchImpl: unused,
+  });
+  const args = ["--print-repository", "--token-file", fix.tokenPath];
+  assert.deepEqual(await captureCli(args, mainImpl), {
+    exitCode: 0, stdout: ["fixture-owner/fixture-repo"], stderr: [],
+  });
+  assert.deepEqual(await captureCli([...args, "--repo", "other/target"], mainImpl), {
+    exitCode: 0, stdout: ["other/target"], stderr: [],
+  });
+  assert.equal(unused.mock.callCount(), 0);
+});
+
+test("unresolved origin emits only the fixed diagnostic", async (t) => {
+  const fix = await createFixture(t);
+  const unused = t.mock.fn(assert.fail);
+  const origins = [
+    undefined, "https://example.com/o/r", "https://github.com/o/r/extra",
+    "https://x:y@github.com/o/r", "https://github.com:443/o/r", "https://github.com/o/r?q",
+    "https://github.com/o/r#fragment", "git@github.com:o/r/", "https://github.com/o/r\n\n",
+  ];
+  for (const origin of origins) {
+    const readOrigin = async () => {
+      if (origin === undefined) throw new Error("git config failed with private details");
+      return origin;
+    };
+    const mainImpl = ({ args }) => main({
+      args, env: {}, root: fix.root, readOrigin,
+      readFile: unused, readIdentity: unused, runIngest: unused, fetchImpl: unused,
+    });
+    const expected = "Research-watch target repository unresolved: origin is not a GitHub repository URL; pass --repo owner/name.";
+    for (const flags of [[], ["--print-repository"]]) {
+      assert.deepEqual(await captureCli([...flags, "--token-file", fix.tokenPath], mainImpl), {
+        exitCode: 2, stdout: [], stderr: [expected],
+      });
+    }
+  }
+  assert.equal(unused.mock.callCount(), 0);
+});
+
+test("write failure after branch creation stays in the write phase", async (t) => {
+  const fix = await createFixture(t);
+  const { handler, calls } = mockGraphQLHandler();
+  const mainImpl = ({ args }) => main({
+    args, env: {}, root: fix.root, readOrigin: fixtureReadOrigin,
+    readIdentity: fix.readIdentity, runIngest: fix.runIngest,
+    fetchImpl: async (input, init) => {
+      const response = await handler(input, init);
+      if (!calls.at(-1).query.includes("CreateCommitOnBranch")) return response;
+      // Failure while discarding a rejected write response, after createRef succeeded.
+      return {
+        ok: false,
+        status: 422,
+        body: { async cancel() { throw new Error("Invalid additions allow-list: private details"); } },
+      };
+    },
+  });
+  assert.deepEqual(await captureCli(["--token-file", fix.tokenPath], mainImpl), {
+    exitCode: 1, stdout: [],
+    stderr: ["Research-watch publication failed in the GitHub write phase; check credentials, branch state and network."],
+  });
+  assert.equal(calls.length, 3);
+  assert.match(calls[1].query, /mutation CreateRef/u);
+  assert.match(calls[2].query, /mutation CreateCommitOnBranch/u);
+});
+
+test("unexpected errors report the pre-write phase", async () => {
+  for (const [message, field] of [["remote private details", ""], ["Invalid source_links", " Invalid source_links."]]) {
+    const result = await captureCli([], async () => { throw new Error(message); });
+    assert.deepEqual(result, { exitCode: 1, stdout: [], stderr: [preWriteDiagnostic + field] });
+  }
+  assert.deepEqual(await captureCli(["private"], main), {
+    exitCode: 1, stdout: [], stderr: [preWriteDiagnostic + " Invalid CLI argument."],
+  });
+});
+
+test("default origin reader uses the supplied checkout", async (t) => {
+  const fix = await createFixture(t);
+  const git = fixtureGit(fix.root);
+  git("init", "-q");
+  git("remote", "add", "origin", "git@github.com:local-fork/local-project.git");
+  const result = await main({ args: ["--print-repository"], root: fix.root, env: {} });
+  assert.deepEqual(result, { exitCode: 0, message: "local-fork/local-project" });
+});
+
+test("git config reads ignore a repository exported by an enclosing git hook", async (t) => {
+  const fix = await createFixture(t);
+  const outer = await createFixture(t);
+  const git = fixtureGit(fix.root);
+  git("init", "-q");
+  git("config", "user.name", "Fixture Maintainer");
+  git("config", "user.email", "maintainer@example.org");
+  git("remote", "add", "origin", "git@github.com:local-fork/local-project.git");
+  const outerGit = fixtureGit(outer.root);
+  outerGit("init", "-q");
+  outerGit("config", "user.name", "Enclosing Maintainer");
+  outerGit("config", "user.email", "enclosing@example.org");
+  outerGit("remote", "add", "origin", "https://github.com/enclosing-owner/enclosing-repo.git");
+  const saved = { GIT_DIR: process.env.GIT_DIR, GIT_WORK_TREE: process.env.GIT_WORK_TREE };
+  try {
+    process.env.GIT_DIR = path.join(outer.root, ".git");
+    process.env.GIT_WORK_TREE = outer.root;
+    assert.deepEqual(await readGitIdentity({ root: fix.root }), fixtureIdentity);
+    const result = await main({ args: ["--print-repository"], root: fix.root, env: {} });
+    assert.deepEqual(result, { exitCode: 0, message: "local-fork/local-project" });
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });

@@ -358,6 +358,10 @@ the exact diff; this file records why the project changed.
 
 ### Fixed
 
+- The research-watch publisher takes its target from the checkout's `origin`
+  so scheduled runs follow the fork or renamed organisation. Failure messages
+  now distinguish errors before publication from failures during GitHub writes
+  and name a missing `--repo` or `--token-file` value.
 - Workstation output-lock `retain()` and `release()` take an optional
   per-call `timeoutMs` that bounds each of their I/O calls, so a test can
   shorten the release deadline without shortening the lock's acquire I/O bound.

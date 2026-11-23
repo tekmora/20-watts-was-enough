@@ -21,6 +21,8 @@ publishes verified public leads into the repository.
    - Advances `.watermark` and appends run telemetry to `runs.jsonl`.
 
 2. **Publication** (`scripts/research-watch-publish.mjs`, `npm run publish:research-watch`):
+   - Publishes to the checkout's `origin` remote, so forks publish to themselves.
+     Use `--repo owner/name` to override the target or `--print-repository` to print the resolved target.
    - Runs on a daily systemd timer to execute the ingester and check for updates.
    - Compares the generated `leads.json` against the current `main` branch
      version via the GitHub GraphQL API (`repository.object`). If `leads.json` is
