@@ -358,6 +358,14 @@ the exact diff; this file records why the project changed.
 
 ### Fixed
 
+- Workstation output-lock `retain()` and `release()` take an optional
+  per-call `timeoutMs` that bounds each of their I/O calls, so a test can
+  shorten the release deadline without shortening the lock's acquire I/O bound.
+  The fixture-020 lock tests had passed 1000 ms to `acquireLock`, which also
+  bounded the real exclusive open, write and `fsync`. Under load (load1 52.5)
+  `make verify-all` failed both late-reader cases with a `sync` deadline
+  before the release case started. A planted slow-`fsync` case now covers the
+  split.
 - The Go gate and the CI Go lanes run the tests with `-count=1`, because the
   `go test` cache does not key files outside the `tooling` module and replayed
   a stale pass for an edited fixture input
