@@ -56,6 +56,12 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+// After exit, only the pipes can delay close, so give them one bounded drain allowance.
+function probeDeadlineAction({ exitCode, signalCode, draining }) {
+  if (exitCode === null && signalCode === null) return "kill";
+  return draining ? "expire" : "drain";
+}
+
 function classifyProbeClose({ code, signal, timedOut, stdout }) {
   if (timedOut) {
     throw new Error(`UNDECIDED: host starved; child-process probe exceeded ${STALL_ALLOWANCE_MS} ms`);
@@ -81,6 +87,13 @@ test("probe close distinguishes its own deadline from an external kill", () => {
   }
 });
 
+test("probe deadline kills a running child and bounds the pipe drain of an exited one", () => {
+  assert.equal(probeDeadlineAction({ exitCode: null, signalCode: null, draining: false }), "kill");
+  assert.equal(probeDeadlineAction({ exitCode: 0, signalCode: null, draining: false }), "drain");
+  assert.equal(probeDeadlineAction({ exitCode: null, signalCode: "SIGTERM", draining: false }), "drain");
+  assert.equal(probeDeadlineAction({ exitCode: 0, signalCode: null, draining: true }), "expire");
+});
+
 async function canCreateChildProcess() {
   if (childProcessAvailable !== undefined) return childProcessAvailable;
   const close = await new Promise((resolve) => {
@@ -97,10 +110,23 @@ async function canCreateChildProcess() {
       return;
     }
     let timedOut = false;
-    const timer = setTimeout(() => {
+    let draining = false;
+    function onDeadline() {
+      const action = probeDeadlineAction({ exitCode: child.exitCode, signalCode: child.signalCode, draining });
+      if (action === "drain") {
+        draining = true;
+        timer = setTimeout(onDeadline, STALL_ALLOWANCE_MS);
+        return;
+      }
       timedOut = true;
-      child.kill("SIGKILL");
-    }, STALL_ALLOWANCE_MS);
+      if (action === "kill") {
+        child.kill("SIGKILL");
+      } else {
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }
+    }
+    let timer = setTimeout(onDeadline, STALL_ALLOWANCE_MS);
     child.once("error", () => {
       clearTimeout(timer);
       resolve(null);
