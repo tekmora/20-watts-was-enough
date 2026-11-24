@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+
+	"github.com/cordanaLLM/20-watts-was-enough/tooling/internal/boundedexec"
 )
 
 type unixProcessTree struct {
@@ -39,5 +41,5 @@ func (tree *unixProcessTree) terminate() error {
 	if tree.command.Process == nil {
 		return os.ErrProcessDone
 	}
-	return syscall.Kill(-tree.command.Process.Pid, syscall.SIGKILL)
+	return boundedexec.KillProcessGroup(tree.command.Process.Pid)
 }

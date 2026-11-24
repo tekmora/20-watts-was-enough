@@ -364,6 +364,15 @@ the exact diff; this file records why the project changed.
 
 ### Fixed
 
+- Process-group cleanup no longer fails on macOS when the kill that follows
+  the reaped group leader answers EPERM. A macOS runner measured 38 EPERM
+  answers in 200 such kills with no group member left, and a second kill
+  200 ms later answered ESRCH for every one; the workstation runner reported
+  them as failed cleanups. `boundedexec` now
+  holds the one group kill for the workstation runner and the bounded
+  subprocess helpers: after an EPERM it probes the group every 10 ms, for at
+  most 200 probes or 2 s, until ESRCH shows the group is gone. An EPERM that
+  outlasts that bound is still returned as an error (#393).
 - The fixture-026 isolated-child result test derives its child deadline from a
   measured baseline plus a stall allowance and reports the reason for an
   abstention. The production child deadline remains 15 seconds.
