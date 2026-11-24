@@ -28,7 +28,9 @@ type processGroupKiller struct {
 // gone. Darwin can answer EPERM for a group whose leader was just reaped
 // before it answers ESRCH, so an EPERM starts a bounded probe that waits for
 // ESRCH; an EPERM that outlasts the bound is a real permission refusal and is
-// returned as an error matching syscall.EPERM.
+// returned as an error matching syscall.EPERM. pgid must be above 1, because
+// kill(-1, sig) signals every process the caller may signal instead of group 1;
+// smaller values return an error matching syscall.EINVAL without a signal.
 func KillProcessGroup(pgid int) error {
 	killer := processGroupKiller{
 		kill:  syscall.Kill,
@@ -39,7 +41,7 @@ func KillProcessGroup(pgid int) error {
 }
 
 func (killer processGroupKiller) killProcessGroup(pgid int) error {
-	if pgid <= 0 {
+	if pgid <= 1 {
 		return fmt.Errorf("invalid process group %d: %w", pgid, syscall.EINVAL)
 	}
 	err := killer.kill(-pgid, syscall.SIGKILL)

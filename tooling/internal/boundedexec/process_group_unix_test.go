@@ -266,5 +266,13 @@ func rekillAndBoundaryCases() []killProcessGroupCase {
 			pgid:    0,
 			wantErr: syscall.EINVAL,
 		},
+		{name: "negative_pgid_rejected", pgid: -7, wantErr: syscall.EINVAL},
+		{name: "broadcast_pgid_one_rejected", pgid: 1, wantErr: syscall.EINVAL},
+		{
+			name:      "lowest_group_two_signalled",
+			pgid:      2,
+			results:   []error{nil},
+			wantCalls: []killCall{{pid: -2, signal: syscall.SIGKILL}},
+		},
 	}
 }

@@ -372,7 +372,9 @@ the exact diff; this file records why the project changed.
   holds the one group kill for the workstation runner and the bounded
   subprocess helpers: after an EPERM it probes the group every 10 ms, for at
   most 200 probes or 2 s, until ESRCH shows the group is gone. An EPERM that
-  outlasts that bound is still returned as an error (#393).
+  outlasts that bound is still returned as an error. A group id below 2 is
+  refused before any signal, because a kill aimed at -1 reaches every process
+  the caller may signal instead of one group (#393).
 - The fixture-026 isolated-child result test derives its child deadline from a
   measured baseline plus a stall allowance and reports the reason for an
   abstention. The production child deadline remains 15 seconds.
