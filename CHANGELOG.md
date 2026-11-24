@@ -7,6 +7,14 @@ the exact diff; this file records why the project changed.
 
 ### Added
 
+- Add the generated [Stage-0 condition report](research/stage0-conditions.md):
+  per adoption-matrix mechanism, the state of each of the seven Stage-0
+  conditions of the research roadmap, with evidence links and inventory
+  domains; `npm run validate:stage0-conditions` fails on a stale report. Cells
+  that hold record a structural check, not a result
+  ([Decision 0134](decisions/0134-report-stage-0-conditions-per-mechanism.md),
+  #481).
+
 - Add the F-020 ICP-T02 public-development smoke harness with vascular tree
   generation, four-regime radius optimisation via golden-section search on total
   power, calibration cell verification and track-parameterised runner within
@@ -23,6 +31,13 @@ the exact diff; this file records why the project changed.
 - Add a scheduled bounded soak for workstation runner and book renderer resource growth.
 
 ### Changed
+
+- The principle-registry reader behind the
+  [mechanism index](research/mechanism-index.json) now parses Markdown instead of
+  matching raw text, so headings and claim links inside code no longer count
+  and reference-style claim links do. Reference syntax without a definition,
+  such as `[C-012][missing]`, now fails the read; the index output is
+  unchanged (#481).
 
 - Ruleset `21746706` (`Protect main`) now names one bypass actor: the repository
   admin role (actor id `5`) in bypass mode `pull_request`; it bypasses rules on

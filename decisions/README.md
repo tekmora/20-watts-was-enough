@@ -135,3 +135,4 @@ than silently changing its outcome.
 | [0130](0130-move-the-renderer-lock-to-buildx-0-39-0.md) | Move the renderer lock to Buildx 0.39.0 | accepted |
 | [0131](0131-run-the-go-tests-without-the-test-cache.md) | Run the Go tests without the test cache | accepted |
 | [0133](0133-let-the-repository-admin-bypass-main-on-pull-requests.md) | Let the repository admin bypass main on pull requests | accepted |
+| [0134](0134-report-stage-0-conditions-per-mechanism.md) | Report the Stage-0 conditions per mechanism | accepted |

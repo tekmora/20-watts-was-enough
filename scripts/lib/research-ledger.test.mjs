@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import {
+  PrincipleRegistryError,
   parseClaimLedger,
   parsePrincipleRegistry,
   parseCandidateIndex,
@@ -90,4 +91,74 @@ test('parseClaimLedger leaves an Evidence status field as unknown', () => {
 test('parsePrincipleRegistry keeps non-ASCII letters in the anchor', () => {
   const text = '## P-014 — Café régime\n\nBody.\n';
   assert.strictEqual(parsePrincipleRegistry(text)[0].anchor, 'p-014--café-régime');
+});
+
+test('parsePrincipleRegistry ignores principle headings inside fenced code blocks', () => {
+  const text = [
+    '## P-001 — Real principle',
+    '',
+    '```markdown',
+    '## P-099 — Fake',
+    '[C-099](claims.md#c-099)',
+    '```',
+    '',
+    'Body [C-001](claims.md#c-001).',
+  ].join('\n');
+  const principles = parsePrincipleRegistry(text);
+  assert.strictEqual(principles.length, 1);
+  assert.strictEqual(principles[0].id, 'P-001');
+  assert.deepStrictEqual(principles[0].claims, ['C-001']);
+});
+
+test('parsePrincipleRegistry ignores claim links inside inline code', () => {
+  const text = [
+    '## P-001 — Real principle',
+    '',
+    'Inline example `[C-007](claims.md#c-007)` and real [C-002](claims.md#c-002).',
+  ].join('\n');
+  const [principle] = parsePrincipleRegistry(text);
+  assert.deepStrictEqual(principle.claims, ['C-002']);
+});
+
+test('parsePrincipleRegistry resolves reference-style claim links', () => {
+  const text = [
+    '## P-001 — Real principle',
+    '',
+    'Manifestation ([C-012][c12]).',
+    '',
+    '[c12]: claims.md#c-012',
+  ].join('\n');
+  const [principle] = parsePrincipleRegistry(text);
+  assert.deepStrictEqual(principle.claims, ['C-012']);
+});
+
+test('parsePrincipleRegistry expands en-dash claim ranges and bounds range width', () => {
+  const text = [
+    '## P-001 — Real principle',
+    '',
+    'Range [C-001](claims.md#c-001)–[C-003](claims.md#c-003).',
+  ].join('\n');
+  const [principle] = parsePrincipleRegistry(text);
+  assert.deepStrictEqual(principle.claims, ['C-001', 'C-002', 'C-003']);
+
+  const wide = '## P-001 — Real principle\n\n[C-001](claims.md#c-001)–[C-201](claims.md#c-201).\n';
+  assert.throws(
+    () => parsePrincipleRegistry(wide),
+    (err) => err instanceof PrincipleRegistryError && /exceeds 200/u.test(err.message),
+  );
+});
+
+test('parsePrincipleRegistry rejects unresolved reference syntax', () => {
+  const text = [
+    '## P-001 — Real principle',
+    '',
+    'Manifestation ([C-012][nope]).',
+  ].join('\n');
+  assert.throws(
+    () => parsePrincipleRegistry(text),
+    (err) =>
+      err instanceof PrincipleRegistryError
+      && err.name === 'PrincipleRegistryError'
+      && /unresolved link reference/u.test(err.message),
+  );
 });

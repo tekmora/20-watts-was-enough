@@ -51,6 +51,7 @@ chapters.
 | [Field coverage](../research/field-coverage.md) | Generated scientific-field census and breadth queue |
 | [Domain inventory](../research/domain-inventory.md) | Audited, partial, and queued domains |
 | [Adoption matrix](../research/adoption-matrix.md) | Mechanisms to use, test, explore, or watch |
+| [Stage-0 condition report](../research/stage0-conditions.md) | Generated state of the seven Stage-0 conditions per adoption-matrix mechanism |
 | [Normative baseline](../research/normative-baseline.md) | EU/German applicability and source-role rules |
 | [Research integrity baseline](../research/research-integrity-baseline.md) | Deduplicated ALLEA, EU, DFG, and institutional rules for conduct, disclosure, stewardship, ethics, correction, and review |
 | [Research-output disclosures](../research/disclosures/README.md) | Contributor roles, support, competing interests, material tools, accountable approval, and verification for tagged snapshots |

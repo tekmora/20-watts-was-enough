@@ -22,6 +22,10 @@ An “explore” label does not claim nobody has published a related model. It s
 that no evidence in this ledger yet validates the translation at the intended
 system boundary.
 
+The generated [Stage-0 condition report](stage0-conditions.md) states, for
+each row, which of the seven Stage-0 conditions of the research roadmap a
+repository check finds met, missing or undecided.
+
 ## Working matrix
 
 | Candidate | Biological or scientific principle | Current disposition | What already exists | Missing test for this project | Claim |
