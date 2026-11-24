@@ -58,6 +58,9 @@ ledger edit.
    49 of 81 mechanisms as having no chapter, against 7 with both directions.
    Every input file is read as Markdown: reference-style links count like
    inline links, and links inside code spans or fenced code do not count.
+   The parser leaves a reference whose label has no definition as plain
+   text, so the generator also fails on reference syntax left in text: a
+   `][label]` or `][]` junction, or a bracketed claim id such as `[C-005]`.
 5. A mechanism maps to the domain-inventory rows that share one of its
    condition-3 bundles. A bundle cell names single principles or inclusive
    ranges such as `P-005--P-010` or `P-001–P-013`; each range counts every
@@ -69,8 +72,9 @@ ledger edit.
    fails closed on unknown table headers, unknown claims in the matrix or a
    chapter, unknown bibliography keys, unknown inventory states, reversed
    claim or principle ranges, reference-style links without a definition,
-   coverage artifacts without a `missingFacets` array, input files above
-   8 MiB, more than 200 chapter files and a report above 2 MiB.
+   coverage artifacts whose `missingFacets` is not an array of declared
+   protocol facet ids, input files above 8 MiB, more than 200 chapter files
+   and a report above 2 MiB.
 7. A cell that holds passed a structural check. It promotes no claim and is
    no scientific result.
 8. Each condition with at least one `gap` row gets its own issue that lists

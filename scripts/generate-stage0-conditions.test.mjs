@@ -44,9 +44,13 @@ function makeCoverage(artifacts = [], claims = []) {
     schema: 2,
     criteria: {
       protocolComplete: [
+        { id: "question", label: "question or hypothesis" },
+        { id: "system", label: "system, scenario, or task family" },
         { id: "comparators", label: "arms, baselines, or strongest nulls" },
-        { id: "ablations", label: "ablations" },
+        { id: "budget", label: "matched budget and cost boundary" },
         { id: "measurements", label: "measurements and units" },
+        { id: "ablations", label: "ablations" },
+        { id: "analysis", label: "analysis or statistical plan" },
         { id: "failure", label: "rejection, kill, or retirement rule" },
       ],
     },
@@ -439,13 +443,58 @@ test("unit: inventory expands P- ranges and rejects reversed principle ranges", 
   );
 });
 
-test("unit: indexTestCoverage rejects missing missingFacets and accepts explicit empty array", () => {
+function assertStage0Throws(fn, pattern) {
+  assert.throws(
+    fn,
+    (err) => err instanceof Stage0Error && pattern.test(err.message),
+  );
+}
+
+test("unit: unresolved reference syntax fails closed through parseMd", () => {
+  const known20 = makeClaimSet(20);
+  const known5 = makeClaimSet(5);
+  const matrixRow = (claimCell) =>
+    matrixDoc([`| Mech Ref | Principle | **Explore** | Baselines | Test | ${claimCell} |`]);
+
+  assertStage0Throws(
+    () => extractMatrix(parseMd(matrixRow("[C-005][missing]")), known20),
+    /unresolved link reference "\]\[missing\]"/u,
+  );
+  assertStage0Throws(
+    () => extractMatrix(parseMd(matrixRow("[C-005][]")), known20),
+    /unresolved link reference/u,
+  );
+  assertStage0Throws(
+    () => extractMatrix(parseMd(matrixRow("[C-005]")), known20),
+    /unresolved link reference "\[C-005\]"/u,
+  );
+  assertStage0Throws(
+    () => extractChapterClaims(parseMd("See [C-003][nope].\n"), known5, "concept/10-ch.md"),
+    /unresolved link reference.*at line 1/u,
+  );
+
+  const codeMd = "Code `[C-003][nope]` here.\n\n```\n[C-004][x]\n```\n";
+  assert.deepEqual(extractChapterClaims(parseMd(codeMd), known5, "concept/10-ch.md"), []);
+
+  const definedMd = "See [C-003][c3].\n\n[c3]: ../research/claims.md#c-003\n";
+  assert.deepEqual(extractChapterClaims(parseMd(definedMd), known5, "concept/10-ch.md"), ["C-003"]);
+});
+
+test("unit: indexTestCoverage rejects missing or malformed missingFacets and accepts explicit empty array", () => {
   const missingFieldCov = makeCoverage([
     { id: "candidate-001", path: "experiments/candidates/001-a.md" },
   ]);
   assert.throws(
     () => indexTestCoverage(missingFieldCov),
     (err) => err instanceof Stage0Error && /missingFacets/u.test(err.message),
+  );
+  assertStage0Throws(
+    () => indexTestCoverage(makeCoverage([{ id: "candidate-001", path: "experiments/candidates/001-a.md", missingFacets: [null] }])),
+    /invalid missingFacets entry null/u,
+  );
+  assertStage0Throws(
+    () => indexTestCoverage(makeCoverage([{ id: "candidate-001", path: "experiments/candidates/001-a.md", missingFacets: ["typo"] }])),
+    /invalid missingFacets entry "typo"/u,
   );
 
   const claims = new Map([

@@ -2,6 +2,8 @@ const MAX_AST_NODES = 200_000;
 const MAX_CLAIM_RANGE_WIDTH = 200;
 const CLAIM_ANCHOR_RE = /^#c-(\d{1,4})$/u;
 const CLAIM_LABEL_RE = /^C-(\d{1,4})$/iu;
+const UNRESOLVED_FULL_OR_COLLAPSED_RE = /\]\[[^[\]]*\]/u;
+const UNRESOLVED_CLAIM_SHORTCUT_RE = /\[C-\d{1,4}\]/iu;
 
 function pushChildren(stack, children, visited, file, ErrorType) {
   if (!Array.isArray(children)) return;
@@ -72,6 +74,22 @@ function toResolvedLink(refNode, definitions, file, ErrorType) {
   };
 }
 
+function findUnresolvedReference(value) {
+  return UNRESOLVED_FULL_OR_COLLAPSED_RE.exec(value)
+    ?? UNRESOLVED_CLAIM_SHORTCUT_RE.exec(value);
+}
+
+function assertNoUnresolvedReferences(root, file, ErrorType) {
+  walkAst(root, file, (node) => {
+    if (node.type !== "text" || typeof node.value !== "string") return;
+    const match = findUnresolvedReference(node.value);
+    if (!match) return;
+    const line = node.position?.start?.line;
+    const suffix = typeof line === "number" ? ` at line ${line}` : "";
+    throw new ErrorType(file, `unresolved link reference "${match[0]}"${suffix}`);
+  }, ErrorType);
+}
+
 function resolveLinkReferences(root, file, ErrorType) {
   const definitions = collectDefinitions(root, file, ErrorType);
   walkAst(root, file, (node) => {
@@ -83,6 +101,7 @@ function resolveLinkReferences(root, file, ErrorType) {
       }
     }
   }, ErrorType);
+  assertNoUnresolvedReferences(root, file, ErrorType);
 }
 
 function formatClaimId(num) {

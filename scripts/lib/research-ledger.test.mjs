@@ -147,3 +147,18 @@ test('parsePrincipleRegistry expands en-dash claim ranges and bounds range width
     (err) => err instanceof PrincipleRegistryError && /exceeds 200/u.test(err.message),
   );
 });
+
+test('parsePrincipleRegistry rejects unresolved reference syntax', () => {
+  const text = [
+    '## P-001 — Real principle',
+    '',
+    'Manifestation ([C-012][nope]).',
+  ].join('\n');
+  assert.throws(
+    () => parsePrincipleRegistry(text),
+    (err) =>
+      err instanceof PrincipleRegistryError
+      && err.name === 'PrincipleRegistryError'
+      && /unresolved link reference/u.test(err.message),
+  );
+});

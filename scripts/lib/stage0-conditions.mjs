@@ -562,6 +562,19 @@ function assertArtifactFacets(artifacts, file) {
   }
 }
 
+function assertArtifactFacetEntries(artifacts, facetLabels, file) {
+  for (const artifact of artifacts) {
+    for (const entry of artifact.missingFacets) {
+      if (typeof entry !== "string" || !facetLabels.has(entry)) {
+        throw new Stage0Error(
+          file,
+          `artifact ${artifact.id} has invalid missingFacets entry ${JSON.stringify(entry)}`,
+        );
+      }
+    }
+  }
+}
+
 function assertCoverageShape(coverage, file) {
   if (!coverage || typeof coverage !== "object" || coverage.schema !== 2) {
     const actual = coverage ? coverage.schema : undefined;
@@ -577,6 +590,7 @@ export function indexTestCoverage(coverage, file = "experiments/test-coverage.js
   if (coverage?.[INDEXED_COVERAGE]) return coverage;
   assertCoverageShape(coverage, file);
   const facetLabels = buildFacetLabelMap(coverage.criteria?.protocolComplete, file);
+  assertArtifactFacetEntries(coverage.artifacts, facetLabels, file);
   const artifactById = new Map(coverage.artifacts.map((a) => [a.id, a]));
   const artifactByPath = new Map(coverage.artifacts.map((a) => [a.path, a]));
   const claimArtifactsById = new Map(coverage.claims.map((c) => [c.id, c.artifacts ?? []]));
