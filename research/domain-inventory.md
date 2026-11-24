@@ -8,6 +8,8 @@ against external classifications in the generated
 [field-coverage census](field-coverage.md). The governing method is the
 [open-world discovery policy](discovery-policy.md). A domain stays here even
 when all of its useful observations deduplicate into an existing principle.
+The generated [Stage-0 condition report](stage0-conditions.md) maps each
+adoption-matrix mechanism to the rows here that share one of its `P-` bundles.
 
 ## Audit states
 

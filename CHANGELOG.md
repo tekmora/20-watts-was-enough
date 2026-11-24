@@ -7,6 +7,14 @@ the exact diff; this file records why the project changed.
 
 ### Added
 
+- Add the generated [Stage-0 condition report](research/stage0-conditions.md):
+  per adoption-matrix mechanism, the state of each of the seven Stage-0
+  conditions of the research roadmap, with evidence links and inventory
+  domains; `npm run validate:stage0-conditions` fails on a stale report. Cells
+  that hold record a structural check, not a result
+  ([Decision 0134](decisions/0134-report-stage-0-conditions-per-mechanism.md),
+  #481).
+
 - Add the F-020 ICP-T02 public-development smoke harness with vascular tree
   generation, four-regime radius optimisation via golden-section search on total
   power, calibration cell verification and track-parameterised runner within
