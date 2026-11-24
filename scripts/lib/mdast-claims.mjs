@@ -79,6 +79,9 @@ function findUnresolvedReference(value) {
     ?? UNRESOLVED_CLAIM_SHORTCUT_RE.exec(value);
 }
 
+// Text inside link labels is checked on purpose: without its definition, a
+// bracketed claim id is link text and the claim would drop out silently
+// (Decision 0134, rule 4).
 function assertNoUnresolvedReferences(root, file, ErrorType) {
   walkAst(root, file, (node) => {
     if (node.type !== "text" || typeof node.value !== "string") return;
