@@ -32,6 +32,11 @@ the exact diff; this file records why the project changed.
 
 ### Changed
 
+- The principle-registry reader behind the
+  [mechanism index](research/mechanism-index.json) now parses Markdown instead of
+  matching raw text, so headings and claim links inside code no longer count
+  and reference-style claim links do; the index output is unchanged (#481).
+
 - Ruleset `21746706` (`Protect main`) now names one bypass actor: the repository
   admin role (actor id `5`) in bypass mode `pull_request`; it bypasses rules on
   pull requests only, so a direct push to `main` stays refused for every actor

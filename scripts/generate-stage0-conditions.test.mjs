@@ -20,6 +20,7 @@ import {
   extractInventory,
   extractMatrix,
   indexChapterClaims,
+  indexTestCoverage,
   parseBibliographyKeys,
   renderReport,
 } from "./lib/stage0-conditions.mjs";
@@ -92,7 +93,7 @@ function runCli(args) {
   return execFileAsync(process.execPath, [
     "scripts/generate-stage0-conditions.mjs",
     ...args,
-  ]);
+  ], { timeout: 120_000 });
 }
 
 function assertCliFails(args, pattern) {
@@ -327,6 +328,148 @@ test("unit: condition 7 flags ../sources/ link and renderReport passes prose aud
   assert.match(evaluated.conditions[6].evidence, /sources\/2026-08-05-google-doc\.md/u);
   const rendered = renderReport({ evaluations: [evaluated], skippedInventoryRows: 3 });
   assert.deepEqual(auditText(rendered, "research/stage0-conditions.md"), []);
+});
+
+test("unit: matrix resolves reference-style claim links, ranges, and rejects undefined refs", () => {
+  const md = [
+    matrixDoc([
+      "| Mech Single | Principle | **Explore** | Baselines | Test | [C-003][c3] |",
+      "| Mech Range | Principle | **Explore** | Baselines | Test | [C-010][a]–[C-012][b] |",
+    ]),
+    "[c3]: claims.md#c-003",
+    "[a]: claims.md#c-010",
+    "[b]: claims.md#c-012",
+    "",
+  ].join("\n");
+  const rows = extractMatrix(parseMd(md), makeClaimSet(20));
+  assert.deepEqual(rows[0].claims, ["C-003"]);
+  assert.deepEqual(rows[1].claims, ["C-010", "C-011", "C-012"]);
+
+  const orphanTree = {
+    type: "root",
+    children: [
+      {
+        type: "paragraph",
+        children: [{ type: "linkReference", identifier: "missing", label: "missing", children: [] }],
+      },
+    ],
+  };
+  assert.throws(
+    () => extractChapterClaims(orphanTree, makeClaimSet(5), "concept/10-ch.md"),
+    (err) => err instanceof Stage0Error && /undefined link reference "missing"/u.test(err.message),
+  );
+});
+
+test("unit: condition 4 opens when a chapter links a row claim via reference-style link", () => {
+  const chapterMd = [
+    "# Chapter",
+    "",
+    "Evidence in [C-005][c5].",
+    "",
+    "[c5]: ../research/claims.md#c-005",
+    "",
+  ].join("\n");
+  const chapterClaims = extractChapterClaims(parseMd(chapterMd), makeClaimSet(10), "concept/10-ch.md");
+  assert.deepEqual(chapterClaims, ["C-005"]);
+  const claims = new Map([
+    ["C-005", { id: "C-005", primaryKeys: ["k1"], primarySources: [], chapters: [] }],
+  ]);
+  const row = {
+    mechanism: "Mech",
+    disposition: "Explore",
+    analogues: "MoE",
+    claims: ["C-005"],
+    experiments: [],
+    sources: [],
+  };
+  const evaluated = evaluateMechanism(row, {
+    claims,
+    testCoverage: makeCoverage(),
+    chapterEquations: new Map([["concept/10-ch.md", { display: 0, inline: 0 }]]),
+    chaptersByClaim: indexChapterClaims([["concept/10-ch.md", chapterClaims]]),
+  });
+  assert.equal(evaluated.conditions[3].state, "open");
+  assert.match(evaluated.conditions[3].evidence, /concept\/10-ch\.md/u);
+});
+
+test("unit: reference-style ../sources/ link in a matrix row marks condition 7 as gap", () => {
+  const md = [
+    matrixDoc([
+      "| Mech Src | Principle ([lead][src]) | **Explore** | MoE | Test | [C-001](claims.md#c-001) |",
+    ]),
+    "[src]: ../sources/2026-08-05-lead.md",
+    "",
+  ].join("\n");
+  const [row] = extractMatrix(parseMd(md), makeClaimSet(5));
+  assert.deepEqual(row.sources, ["../sources/2026-08-05-lead.md"]);
+  const claims = new Map([
+    ["C-001", { id: "C-001", primaryKeys: ["k1"], primarySources: [], chapters: [] }],
+  ]);
+  const evaluated = evaluateMechanism(row, {
+    claims,
+    testCoverage: makeCoverage(),
+    chapterEquations: new Map(),
+  });
+  assert.equal(evaluated.conditions[6].state, "gap");
+  assert.match(evaluated.conditions[6].evidence, /sources\/2026-08-05-lead\.md/u);
+});
+
+test("unit: inventory expands P- ranges and rejects reversed principle ranges", () => {
+  const validMd = [
+    "| Domain | Problem patterns to collect | Current bundles | State | Next pass |",
+    "| --- | --- | --- | --- | --- |",
+    "| Plants | signaling | P-002--P-004 | partial | next |",
+    "| Math | proofs | all existing P-001–P-003 bundles | partial | next |",
+    "| Mixed | slashes | P-001/P-002/P-005--P-007/P-009 | partial | next |",
+  ].join("\n");
+  const inv = extractInventory(parseMd(validMd));
+  assert.equal(inv.rows.length, 3);
+  assert.deepEqual(inv.rows[0].bundles, ["P-002", "P-003", "P-004"]);
+  assert.deepEqual(inv.rows[1].bundles, ["P-001", "P-002", "P-003"]);
+  assert.deepEqual(inv.rows[2].bundles, ["P-001", "P-002", "P-005", "P-006", "P-007", "P-009"]);
+
+  const reversedMd = [
+    "| Domain | Problem patterns to collect | Current bundles | State | Next pass |",
+    "| --- | --- | --- | --- | --- |",
+    "| Bad | rev | P-005--P-003 | partial | next |",
+  ].join("\n");
+  assert.throws(
+    () => extractInventory(parseMd(reversedMd)),
+    (err) => err instanceof Stage0Error && /reversed principle range P-005–P-003/u.test(err.message),
+  );
+});
+
+test("unit: indexTestCoverage rejects missing missingFacets and accepts explicit empty array", () => {
+  const missingFieldCov = makeCoverage([
+    { id: "candidate-001", path: "experiments/candidates/001-a.md" },
+  ]);
+  assert.throws(
+    () => indexTestCoverage(missingFieldCov),
+    (err) => err instanceof Stage0Error && /missingFacets/u.test(err.message),
+  );
+
+  const claims = new Map([
+    ["C-001", { id: "C-001", primaryKeys: ["k1"], primarySources: [], chapters: [] }],
+  ]);
+  const row = {
+    mechanism: "Mech",
+    disposition: "Experiment",
+    analogues: "MoE",
+    claims: ["C-001"],
+    experiments: [],
+    sources: [],
+  };
+  const emptyArrayCov = makeCoverage(
+    [{ id: "candidate-001", path: "experiments/candidates/001-a.md", missingFacets: [] }],
+    [{ id: "C-001", artifacts: ["candidate-001"] }],
+  );
+  const indexed = indexTestCoverage(emptyArrayCov);
+  const evaluated = evaluateMechanism(row, {
+    claims,
+    testCoverage: indexed,
+    chapterEquations: new Map(),
+  });
+  assert.equal(evaluated.conditions[5].state, "holds");
 });
 
 test("integration: valid --check passes, missing and byte-tampered output fail", async () => {

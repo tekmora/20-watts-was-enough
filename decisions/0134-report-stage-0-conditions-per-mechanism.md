@@ -56,15 +56,21 @@ ledger edit.
    `../research/claims.md#c-N`, ranges included. Many chapters cite a claim
    without the claim listing the chapter back; reading only *Used by* marked
    49 of 81 mechanisms as having no chapter, against 7 with both directions.
+   Every input file is read as Markdown: reference-style links count like
+   inline links, and links inside code spans or fenced code do not count.
 5. A mechanism maps to the domain-inventory rows that share one of its
-   condition-3 bundles. The wider-horizon table has no bundle column and is
+   condition-3 bundles. A bundle cell names single principles or inclusive
+   ranges such as `P-005--P-010` or `P-001–P-013`; each range counts every
+   principle it spans. The wider-horizon table has no bundle column and is
    not mapped; the report states how many of its rows were skipped.
 6. `npm run validate:stage0-conditions` regenerates the report in memory and
    fails when the committed file is missing or stale. It runs in `npm test`,
    `check:full-without-workstation` and `check:lane-research`. The generator
    fails closed on unknown table headers, unknown claims in the matrix or a
-   chapter, unknown bibliography keys, unknown inventory states, input files
-   above 8 MiB, more than 200 chapter files and a report above 2 MiB.
+   chapter, unknown bibliography keys, unknown inventory states, reversed
+   claim or principle ranges, reference-style links without a definition,
+   coverage artifacts without a `missingFacets` array, input files above
+   8 MiB, more than 200 chapter files and a report above 2 MiB.
 7. A cell that holds passed a structural check. It promotes no claim and is
    no scientific result.
 8. Each condition with at least one `gap` row gets its own issue that lists

@@ -1,6 +1,8 @@
-const MAX_AST_NODES = 200_000;
+import { createMdastTools } from "./mdast-claims.mjs";
+
+const MAX_ROOT_CHILDREN = 200_000;
 const MAX_MATRIX_ROWS = 1_000;
-const MAX_CLAIM_RANGE_WIDTH = 200;
+const MAX_PRINCIPLE_MATCHES = 10_000;
 const MAX_BIB_MATCHES = 200_000;
 const MAX_ANALOGUE_CHARS = 100;
 const EVIDENCE_LIST_LIMIT = 5;
@@ -63,13 +65,12 @@ const REQUIRED_FACET_IDS = Object.freeze([
 ]);
 
 const CLAIM_HEADING_RE = /^C-\d{3,4}$/u;
-const CLAIM_ANCHOR_RE = /^#c-(\d{1,4})$/u;
 const MATRIX_CLAIM_BASE = "claims.md";
 const CHAPTER_CLAIM_BASE = "../research/claims.md";
 const MATRIX_EXPERIMENT_RE = /^\.\.\/experiments\/(candidates|fixtures)\/([^/#?]+\.md)$/u;
 const HELD_CANDIDATE_RE = /^\.\.\/experiments\/candidates\/([^/#?]+\.md)$/u;
 const CONCEPT_LINK_RE = /^\.\.\/concept\/([^/#?]+\.md)(#.*)?$/u;
-const PRINCIPLE_TOKEN_RE = /\bP-\d{3}\b/gu;
+const PRINCIPLE_RANGE_RE = /\bP-(\d{3})(?:\s*(?:--|[-–—])\s*P-(\d{3}))?\b/gu;
 const BIB_KEY_RE = /^@[A-Za-z0-9_]+\{([^,]+),/gmu;
 
 const CONDITION_RULES = Object.freeze([
@@ -132,45 +133,8 @@ export class Stage0Error extends Error {
   }
 }
 
-function pushChildren(stack, children, visited, file) {
-  if (!Array.isArray(children)) return;
-  if (visited + stack.length + children.length > MAX_AST_NODES) {
-    throw new Stage0Error(file, `mdast node limit (${MAX_AST_NODES}) exceeded`);
-  }
-  for (let index = children.length - 1; index >= 0; index -= 1) {
-    stack.push(children[index]);
-  }
-}
-
-function walkAst(root, file, visitor) {
-  if (!root || typeof root !== "object") {
-    throw new Stage0Error(file, "invalid mdast node");
-  }
-  const stack = [root];
-  let visited = 0;
-  while (stack.length > 0) {
-    if (visited >= MAX_AST_NODES) {
-      throw new Stage0Error(file, `mdast node limit (${MAX_AST_NODES}) exceeded`);
-    }
-    visited += 1;
-    const node = stack.pop();
-    if (!node || typeof node !== "object") {
-      throw new Stage0Error(file, "invalid mdast child node");
-    }
-    visitor(node);
-    pushChildren(stack, node.children, visited, file);
-  }
-}
-
-function nodeText(node, file) {
-  const parts = [];
-  walkAst(node, file, (current) => {
-    if (current.type === "text" || current.type === "inlineCode") {
-      parts.push(String(current.value ?? ""));
-    }
-  });
-  return parts.join("").replace(/\s+/gu, " ").trim();
-}
+const { walkAst, nodeText, collectSiblingClaims, resolveLinkReferences } =
+  createMdastTools(Stage0Error);
 
 function uniqueItems(items) {
   return [...new Set(items)];
@@ -199,8 +163,8 @@ function rootChildren(tree, file) {
   if (!tree || typeof tree !== "object" || !Array.isArray(tree.children)) {
     throw new Stage0Error(file, "expected mdast root with children array");
   }
-  if (tree.children.length > MAX_AST_NODES) {
-    throw new Stage0Error(file, `root child limit (${MAX_AST_NODES}) exceeded`);
+  if (tree.children.length > MAX_ROOT_CHILDREN) {
+    throw new Stage0Error(file, `root child limit (${MAX_ROOT_CHILDREN}) exceeded`);
   }
   return tree.children;
 }
@@ -229,69 +193,36 @@ function findTableUnderHeading(tree, headingText, file) {
   throw new Stage0Error(file, `missing table under "## ${headingText}"`);
 }
 
-function formatClaimId(num) {
-  return `C-${String(num).padStart(3, "0")}`;
+function formatPrincipleId(num) {
+  return `P-${String(num).padStart(3, "0")}`;
 }
 
-function parseClaimLink(node, base, file) {
-  if (node?.type !== "link" || typeof node.url !== "string") return null;
-  if (!node.url.startsWith(`${base}#`)) return null;
-  const match = CLAIM_ANCHOR_RE.exec(node.url.slice(base.length));
-  if (!match) {
-    throw new Stage0Error(file, `malformed claim link "${node.url}"`);
-  }
-  const num = Number(match[1]);
-  const id = formatClaimId(num);
-  const label = nodeText(node, file);
-  if (label.toUpperCase() !== id) {
-    throw new Stage0Error(file, `claim link label "${label}" does not match ${id}`);
-  }
-  return { id, num };
-}
-
-function isRangeSeparator(node) {
-  if (node?.type !== "text" || typeof node.value !== "string") return false;
-  const trimmed = node.value.trim();
-  return trimmed === "–" || trimmed === "-";
-}
-
-function expandClaimRange(start, end, file) {
-  if (start.num > end.num) {
-    throw new Stage0Error(file, `reversed claim range ${start.id}–${end.id}`);
-  }
-  const width = end.num - start.num + 1;
-  if (width > MAX_CLAIM_RANGE_WIDTH) {
+function expandPrincipleSpan(startText, endText, seen, file) {
+  const start = Number(startText);
+  const end = endText === undefined ? start : Number(endText);
+  if (start > end) {
     throw new Stage0Error(
       file,
-      `claim range ${start.id}–${end.id} width ${width} exceeds ${MAX_CLAIM_RANGE_WIDTH}`,
+      `reversed principle range ${formatPrincipleId(start)}–${formatPrincipleId(end)}`,
     );
   }
-  const expanded = [];
-  for (let current = start.num; current <= end.num; current += 1) {
-    expanded.push(formatClaimId(current));
+  for (let current = start; current <= end; current += 1) {
+    seen.add(formatPrincipleId(current));
   }
-  return expanded;
 }
 
-function collectSiblingClaims(children, claims, base, file) {
-  let index = 0;
-  while (index < children.length) {
-    const start = parseClaimLink(children[index], base, file);
-    if (!start) {
-      index += 1;
-      continue;
+function extractPrincipleIds(text, file) {
+  const seen = new Set();
+  let count = 0;
+  PRINCIPLE_RANGE_RE.lastIndex = 0;
+  for (const match of text.matchAll(PRINCIPLE_RANGE_RE)) {
+    count += 1;
+    if (count > MAX_PRINCIPLE_MATCHES) {
+      throw new Stage0Error(file, `principle token limit (${MAX_PRINCIPLE_MATCHES}) exceeded`);
     }
-    const end = isRangeSeparator(children[index + 1])
-      ? parseClaimLink(children[index + 2], base, file)
-      : null;
-    if (end) {
-      claims.push(...expandClaimRange(start, end, file));
-      index += 3;
-    } else {
-      claims.push(start.id);
-      index += 1;
-    }
+    expandPrincipleSpan(match[1], match[2], seen, file);
   }
+  return [...seen];
 }
 
 function classifyMatrixLink(url, experiments, sources) {
@@ -360,6 +291,7 @@ function parseMatrixRow(rowNode, seenMechanisms, knownClaims, file) {
 }
 
 export function extractMatrix(tree, knownClaimIds, file = "research/adoption-matrix.md") {
+  resolveLinkReferences(tree, file);
   const table = findTableUnderHeading(tree, "Working matrix", file);
   if (!headersEqual(tableHeaderCells(table, file), MATRIX_HEADER)) {
     throw new Stage0Error(file, "header mismatch");
@@ -390,7 +322,7 @@ function parseInventoryRow(rowNode, file) {
   const domain = nodeText(rowNode.children[0], file);
   if (!domain) throw new Stage0Error(file, "empty domain name in inventory");
   const bundleText = nodeText(rowNode.children[2], file);
-  const bundles = uniqueItems([...bundleText.matchAll(PRINCIPLE_TOKEN_RE)].map((m) => m[0]));
+  const bundles = extractPrincipleIds(bundleText, file);
   const rawState = nodeText(rowNode.children[3], file).split(";", 1)[0].trim().toLowerCase();
   if (!INVENTORY_STATES.has(rawState)) {
     throw new Stage0Error(file, `unknown inventory state "${rawState}"`);
@@ -399,6 +331,7 @@ function parseInventoryRow(rowNode, file) {
 }
 
 export function extractInventory(tree, file = "research/domain-inventory.md") {
+  resolveLinkReferences(tree, file);
   const tables = [];
   walkAst(tree, file, (node) => {
     if (node.type === "table") tables.push(node);
@@ -512,6 +445,7 @@ function collectClaimRecords(children, bibSet, file) {
 
 export function extractClaims(tree, options = {}) {
   const file = options.file ?? "research/claims.md";
+  resolveLinkReferences(tree, file);
   const bibSet = toIdSet(options.bibKeys) ?? new Set();
   const claims = collectClaimRecords(rootChildren(tree, file), bibSet, file);
   finalizeClaimRecords(claims);
@@ -532,7 +466,7 @@ function parseHeldRow(rowNode, file) {
   const name = nodeText(rowNode.children[0], file);
   if (!name) throw new Stage0Error(file, "empty held-candidate name");
   const nearestText = nodeText(rowNode.children[1], file);
-  const nearest = uniqueItems([...nearestText.matchAll(PRINCIPLE_TOKEN_RE)].map((m) => m[0])).sort();
+  const nearest = extractPrincipleIds(nearestText, file).sort();
   const candidatePaths = [];
   walkAst(rowNode.children[3], file, (node) => {
     if (node.type !== "link" || typeof node.url !== "string") return;
@@ -543,6 +477,7 @@ function parseHeldRow(rowNode, file) {
 }
 
 export function extractHeldCandidates(tree, file = "research/principle-registry.md") {
+  resolveLinkReferences(tree, file);
   const table = findTableUnderHeading(tree, "Candidates held outside the registry", file);
   if (!headersEqual(tableHeaderCells(table, file), HELD_HEADER)) {
     throw new Stage0Error(file, "header mismatch");
@@ -551,6 +486,7 @@ export function extractHeldCandidates(tree, file = "research/principle-registry.
 }
 
 export function countChapterEquations(tree, file = "concept/chapter.md") {
+  resolveLinkReferences(tree, file);
   let display = 0;
   let inline = 0;
   walkAst(tree, file, (node) => {
@@ -580,6 +516,7 @@ export function indexPrincipleClaims(principles) {
 }
 
 export function extractChapterClaims(tree, knownClaimIds, file = "concept/chapter.md") {
+  resolveLinkReferences(tree, file);
   const claims = [];
   walkAst(tree, file, (node) => {
     if (Array.isArray(node.children)) {
@@ -616,13 +553,24 @@ function buildFacetLabelMap(protocolComplete, file) {
 
 const INDEXED_COVERAGE = Symbol("indexedCoverage");
 
+function assertArtifactFacets(artifacts, file) {
+  for (const artifact of artifacts) {
+    if (!artifact || !Array.isArray(artifact.missingFacets)) {
+      const id = artifact ? artifact.id : undefined;
+      throw new Stage0Error(file, `artifact ${id} has no missingFacets array`);
+    }
+  }
+}
+
 function assertCoverageShape(coverage, file) {
   if (!coverage || typeof coverage !== "object" || coverage.schema !== 2) {
-    throw new Stage0Error(file, `expected test-coverage schema 2, got ${coverage?.schema}`);
+    const actual = coverage ? coverage.schema : undefined;
+    throw new Stage0Error(file, `expected test-coverage schema 2, got ${actual}`);
   }
   if (!Array.isArray(coverage.artifacts) || !Array.isArray(coverage.claims)) {
     throw new Stage0Error(file, "test-coverage artifacts and claims must be arrays");
   }
+  assertArtifactFacets(coverage.artifacts, file);
 }
 
 export function indexTestCoverage(coverage, file = "experiments/test-coverage.json") {
@@ -781,7 +729,7 @@ function evaluateCondition6(row, coverage) {
   }
   const assessed = artifacts.map((artifact) => ({
     artifact,
-    missing4: REQUIRED_FACET_IDS.filter((id) => (artifact.missingFacets ?? []).includes(id)),
+    missing4: REQUIRED_FACET_IDS.filter((id) => artifact.missingFacets.includes(id)),
   }));
   const passing = assessed.filter((entry) => entry.missing4.length === 0);
   if (passing.length > 0) {
