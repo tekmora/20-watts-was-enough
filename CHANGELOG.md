@@ -37,7 +37,8 @@ the exact diff; this file records why the project changed.
   matching raw text, so headings and claim links inside code no longer count
   and reference-style claim links do. Reference syntax without a definition,
   such as `[C-012][missing]`, now fails the read; the index output is
-  unchanged (#481).
+  unchanged (#481). A test pins that this also holds inside link text, where a
+  bracketed claim id without its definition would otherwise drop out silently.
 
 - Ruleset `21746706` (`Protect main`) now names one bypass actor: the repository
   admin role (actor id `5`) in bypass mode `pull_request`; it bypasses rules on

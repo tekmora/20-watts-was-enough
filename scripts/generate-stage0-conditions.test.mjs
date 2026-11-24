@@ -480,6 +480,33 @@ test("unit: unresolved reference syntax fails closed through parseMd", () => {
   assert.deepEqual(extractChapterClaims(parseMd(definedMd), known5, "concept/10-ch.md"), ["C-003"]);
 });
 
+test("unit: bracketed claim id inside link text fails closed unless its definition exists", () => {
+  const known20 = makeClaimSet(20);
+  const known5 = makeClaimSet(5);
+  const chapter = "concept/10-ch.md";
+  const matrixRow = (claimCell) =>
+    matrixDoc([`| Mech Ref | Principle | **Explore** | Baselines | Test | ${claimCell} |`]);
+
+  assertStage0Throws(
+    () => extractChapterClaims(parseMd("See [notes [C-005]](https://example.org/).\n"), known5, chapter),
+    /unresolved link reference "\[C-005\]" at line 1/u,
+  );
+  assertStage0Throws(
+    () => extractMatrix(parseMd(matrixRow("[notes [C-005]](https://example.org/)")), known20),
+    /unresolved link reference "\[C-005\]"/u,
+  );
+
+  const definedMd =
+    "See [notes [C-005]](https://example.org/).\n\n[C-005]: ../research/claims.md#c-005\n";
+  assert.deepEqual(extractChapterClaims(parseMd(definedMd), known5, chapter), ["C-005"]);
+
+  const plainMd = "See [notes on C-005](https://example.org/).\n";
+  assert.deepEqual(extractChapterClaims(parseMd(plainMd), known5, chapter), []);
+
+  const codeSpanMd = "See [notes `[C-005]`](https://example.org/).\n";
+  assert.deepEqual(extractChapterClaims(parseMd(codeSpanMd), known5, chapter), []);
+});
+
 test("unit: indexTestCoverage rejects missing or malformed missingFacets and accepts explicit empty array", () => {
   const missingFieldCov = makeCoverage([
     { id: "candidate-001", path: "experiments/candidates/001-a.md" },
