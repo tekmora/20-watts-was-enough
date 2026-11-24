@@ -100,7 +100,7 @@ than silently changing its outcome.
 | [0093](0093-refuse-tool-attribution-in-commit-messages.md) | Refuse tool attribution in commit messages | accepted |
 | [0094](0094-name-the-hosted-runner-image-by-version.md) | Name the hosted runner image by version | accepted |
 | [0095](0095-pin-the-praetor-engine-and-refresh-the-adoption.md) | Pin the Praetor engine and refresh the adoption | accepted |
-| [0096](0096-tighten-the-live-main-ruleset-to-the-rendered-policy.md) | Tighten the live main ruleset to the rendered policy | accepted |
+| [0096](0096-tighten-the-live-main-ruleset-to-the-rendered-policy.md) | Tighten the live main ruleset to the rendered policy | accepted; points 3 and 4 partly superseded by [0133](0133-let-the-repository-admin-bypass-main-on-pull-requests.md) for the bypass actor |
 | [0097](0097-keep-workflow-tool-versions-out-of-the-action-update-group.md) | Keep workflow tool versions out of the action update group | accepted |
 | [0098](0098-move-the-renderer-lock-to-buildx-0-37-2.md) | Move the renderer lock to Buildx 0.37.2 | accepted |
 | [0099](0099-scan-the-history-for-secrets-with-a-proven-gitleaks.md) | Scan the history for secrets with a proven gitleaks | accepted |
@@ -134,3 +134,4 @@ than silently changing its outcome.
 | [0128](0128-compare-reader-and-portal-screenshots-in-the-pinned-renderer.md) | Compare reader and portal screenshots in the pinned renderer | accepted |
 | [0130](0130-move-the-renderer-lock-to-buildx-0-39-0.md) | Move the renderer lock to Buildx 0.39.0 | accepted |
 | [0131](0131-run-the-go-tests-without-the-test-cache.md) | Run the Go tests without the test cache | accepted |
+| [0133](0133-let-the-repository-admin-bypass-main-on-pull-requests.md) | Let the repository admin bypass main on pull requests | accepted |

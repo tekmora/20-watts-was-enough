@@ -112,9 +112,12 @@ The `main` ruleset was read back through the API on 2026-09-28 and again on
 2026-10-11. Active ruleset `21746706` was carried over unchanged in the
 transfer and changed three times on 2026-10-11: rebase left its merge methods,
 and two updates added the rules and checks listed under
-[Main protection](#main-protection). It has no bypass actor, requires a pull
-request, seven strict checks, resolved review threads, linear history,
-and CodeQL with no high-or-higher security alert or analysis error. Squash is
+[Main protection](#main-protection). Its one bypass actor is the repository
+admin role in pull-request mode
+([Decision 0133](../decisions/0133-let-the-repository-admin-bypass-main-on-pull-requests.md)).
+It requires a pull request, nine strict checks, resolved review threads,
+linear history, and CodeQL with no high-or-higher security alert or analysis
+error. Squash is
 the only admitted merge method: a pull request lands as one commit, and a pull
 request that carries several small units lists each of them in that commit's
 body. The approval count remains zero because
@@ -142,10 +145,12 @@ API still lacks its own origin certificate for the proxied hostname.
 The active `main` ruleset blocks branch deletion and non-fast-forward updates
 and requires signed commits and a pull request. Its exact strict contexts are
 `CI success`, `PR title`, `CI impact plan`, `Secret scan`,
-`JavaScript and TypeScript analysis`, `Go analysis`, `Go API Compatibility`
-and `Documentation Governance` (rulesets API read-back, 2026-10-13). A new push dismisses
-an earlier review, and CodeQL must report no high-or-higher security alert or
-analysis error. No actor, including the maintainer, can bypass it. The GitHub
+`JavaScript and TypeScript analysis`, `Go analysis`,
+`Apply pull-request metadata`, `Go API Compatibility` and
+`Documentation Governance` (rulesets API read-back, 2026-11-22). A new push
+dismisses an earlier review, and CodeQL must report no high-or-higher security
+alert or analysis error. The repository admin role can bypass these rules on a
+pull request only; no actor can bypass them on a direct push. The GitHub
 rulesets API is authoritative for its current activation state.
 
 The signed-commit rule, the dismissal, `CI impact plan` and the two analysis
@@ -162,8 +167,11 @@ read-back showed seven contexts. `Secret scan` followed after
 put the job on `main`; the read-back on 2026-10-13 showed the eight above.
 [Decision 0122](../decisions/0122-run-pull-request-metadata-and-title-checks-on-pull-request.md)
 moves the labeler to `pull_request`, so the rendered file also requires
-`Apply pull-request metadata`; the live ruleset gains it after that change
-lands.
+`Apply pull-request metadata`; the live ruleset gained it after that change
+landed, and the read-back on 2026-11-22 showed nine contexts.
+[Decision 0133](../decisions/0133-let-the-repository-admin-bypass-main-on-pull-requests.md)
+adds the file's bypass actor, the repository admin role in pull-request mode;
+the same read-back showed it and every other field unchanged.
 
 ## Staged controls and exit conditions
 

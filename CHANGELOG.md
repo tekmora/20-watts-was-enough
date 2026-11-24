@@ -24,6 +24,12 @@ the exact diff; this file records why the project changed.
 
 ### Changed
 
+- Ruleset `21746706` (`Protect main`) now names one bypass actor: the repository
+  admin role (actor id `5`) in bypass mode `pull_request`; it bypasses rules on
+  pull requests only, so a direct push to `main` stays refused for every actor
+  ([Decision 0133](decisions/0133-let-the-repository-admin-bypass-main-on-pull-requests.md)).
+  This replaces the empty bypass list recorded for 0.3.0.
+
 - Add Patreon to the funding links; `.github/FUNDING.yml` now equals the
   fleet copy in `vidiko/vmafx`, and the engineering policy admits that set
   and matches the GitHub login case-insensitively.
