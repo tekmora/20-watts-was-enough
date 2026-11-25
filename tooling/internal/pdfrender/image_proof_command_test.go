@@ -4,12 +4,15 @@ package pdfrender
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -22,6 +25,11 @@ const (
 	heldPipeCancelDeadline = 200 * time.Millisecond
 	heldPipePollInterval   = 5 * time.Millisecond
 	heldPipeStartAttempts  = int(heldPipeStartBound / heldPipePollInterval)
+	// Exceeds heldPipeCancelDeadline + maximumWaitDelay (5 s) + heldPipeExitBound
+	// so an unkilled grandchild is still alive when the test polls for exit.
+	heldPipeChildLifetime = 30 * time.Second
+	heldPipeExitBound     = 2 * time.Second
+	heldPipeExitAttempts  = int(heldPipeExitBound / heldPipePollInterval)
 )
 
 func TestImageProofSubprocessBoundaries(t *testing.T) {
@@ -74,6 +82,7 @@ func TestImageProofHeldPipeCancellation(t *testing.T) {
 	returnedAt := time.Now()
 	cancel()
 	result := <-watched
+	identity, readyErr := readReadyIdentity(t, filepath.Join(markerRoot, "ready"))
 
 	if err == nil || len(proof.Config) != 0 || len(proof.Manifest) != 0 {
 		t.Fatalf("failed subprocess emitted successful proof: %+v %v", proof, err)
@@ -81,18 +90,171 @@ func TestImageProofHeldPipeCancellation(t *testing.T) {
 	if !result.started {
 		t.Fatal("helper did not confirm the grandchild started within the start-up bound")
 	}
-	if _, err := os.Stat(filepath.Join(markerRoot, "ready")); err != nil {
+	if readyErr != nil {
 		t.Fatal("grandchild did not confirm it was running before cancellation")
 	}
 	if returnedAt.Sub(result.cancelledAt) > 4*time.Second {
 		t.Fatal("subprocess exceeded bounded cancellation margin")
 	}
-	// The child writes this marker after 800 ms if it survived. A
-	// pipe-close-only cancellation therefore fails this assertion.
-	time.Sleep(time.Second)
+	// Process-group termination is proven by polling for the grandchild's
+	// recorded identity to exit; absence of survived is a secondary signal
+	// because scheduling delay alone can defer that write.
+	waitForDescendantExit(t, identity)
 	if _, err := os.Stat(filepath.Join(markerRoot, "survived")); !os.IsNotExist(err) {
 		t.Fatal("owned descendant survived process-group cancellation")
 	}
+}
+
+type processIdentity struct {
+	pid       int
+	startTime uint64
+}
+
+type procStat struct {
+	pid       int
+	state     byte
+	startTime uint64
+}
+
+func readReadyIdentity(t *testing.T, readyPath string) (processIdentity, error) {
+	t.Helper()
+	body, err := os.ReadFile(readyPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("read grandchild ready marker: %v", err)
+		}
+		return processIdentity{}, err
+	}
+	identity, err := parseProcessIdentity(body)
+	if err != nil {
+		t.Fatalf("parse grandchild ready marker: %v", err)
+	}
+	t.Cleanup(func() {
+		killDescendantIfRunning(t, identity)
+	})
+	return identity, nil
+}
+
+func parseProcessIdentity(body []byte) (processIdentity, error) {
+	fields := strings.Fields(string(body))
+	if len(fields) != 2 {
+		return processIdentity{}, errors.New("ready marker must contain pid and starttime")
+	}
+	pid, err := parsePositivePID(fields[0])
+	if err != nil {
+		return processIdentity{}, err
+	}
+	startTime, err := strconv.ParseUint(fields[1], 10, 64)
+	if err != nil {
+		return processIdentity{}, errors.New("invalid ready marker starttime")
+	}
+	return processIdentity{pid: pid, startTime: startTime}, nil
+}
+
+func parsePositivePID(digits string) (int, error) {
+	pid, err := strconv.Atoi(digits)
+	if err != nil || pid <= 0 || strconv.Itoa(pid) != digits {
+		return 0, errors.New("invalid process identifier")
+	}
+	return pid, nil
+}
+
+func readProcStat(path string) (procStat, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return procStat{}, err
+	}
+	return parseProcStat(body)
+}
+
+func parseProcStat(body []byte) (procStat, error) {
+	pidDigits, fields, err := splitProcStat(string(body))
+	if err != nil {
+		return procStat{}, err
+	}
+	pid, err := parsePositivePID(pidDigits)
+	if err != nil {
+		return procStat{}, err
+	}
+	startTime, err := strconv.ParseUint(fields[19], 10, 64)
+	if err != nil {
+		return procStat{}, errors.New("invalid proc stat starttime")
+	}
+	return procStat{pid: pid, state: fields[0][0], startTime: startTime}, nil
+}
+
+// Parse fields after the final ')' because comm in /proc/<pid>/stat may
+// contain spaces or parentheses.
+func splitProcStat(text string) (string, []string, error) {
+	openParen := strings.Index(text, " (")
+	closeParen := strings.LastIndexByte(text, ')')
+	if openParen <= 0 || closeParen < openParen+2 {
+		return "", nil, errors.New("malformed proc stat comm bounds")
+	}
+	afterComm := text[closeParen+1:]
+	if !strings.HasPrefix(afterComm, " ") {
+		return "", nil, errors.New("missing space after proc stat comm")
+	}
+	fields := strings.Fields(afterComm[1:])
+	if len(fields) <= 19 || len(fields[0]) != 1 {
+		return "", nil, errors.New("truncated proc stat fields")
+	}
+	return text[:openParen], fields, nil
+}
+
+func descendantExited(identity processIdentity) (bool, error) {
+	stat, err := readProcStat(fmt.Sprintf("/proc/%d/stat", identity.pid))
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if stat.pid != identity.pid || stat.startTime != identity.startTime {
+		return true, nil
+	}
+	return stat.state == 'Z' || stat.state == 'X', nil
+}
+
+func killDescendantIfRunning(t *testing.T, identity processIdentity) {
+	t.Helper()
+	exited, err := descendantExited(identity)
+	if err != nil || exited {
+		return
+	}
+	// A misparsed marker must never signal init, this test binary or its group.
+	if identity.pid <= 1 || identity.pid == os.Getpid() || identity.pid == syscall.Getpgrp() {
+		t.Errorf("refusing to signal process %d: not an owned descendant", identity.pid)
+		return
+	}
+	if err := syscall.Kill(identity.pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		t.Logf("kill surviving descendant %d: %v", identity.pid, err)
+	}
+}
+
+func waitForDescendantExit(t *testing.T, identity processIdentity) {
+	t.Helper()
+	ticker := time.NewTicker(heldPipePollInterval)
+	defer ticker.Stop()
+	for attempt := 0; attempt < heldPipeExitAttempts; attempt++ {
+		if checkDescendantExited(t, identity) {
+			return
+		}
+		<-ticker.C
+	}
+	if checkDescendantExited(t, identity) {
+		return
+	}
+	t.Fatalf("owned descendant %d still running %s after cancellation", identity.pid, heldPipeExitBound)
+}
+
+func checkDescendantExited(t *testing.T, identity processIdentity) bool {
+	t.Helper()
+	exited, err := descendantExited(identity)
+	if err != nil {
+		t.Fatalf("inspect descendant %d proc stat: %v", identity.pid, err)
+	}
+	return exited
 }
 
 func watchHeldPipeStart(parent context.Context, cancel context.CancelFunc, startedPath string, watched chan<- heldPipeWatchResult) {
@@ -179,10 +341,19 @@ func TestImageProofProcessHelper(t *testing.T) {
 }
 
 func runChildHelper(root string) {
-	if err := os.WriteFile(filepath.Join(root, "ready"), []byte("ready"), 0o600); err != nil {
+	stat, err := readProcStat("/proc/self/stat")
+	if err != nil || stat.pid != os.Getpid() {
+		os.Exit(14)
+	}
+	tempReady := filepath.Join(root, "ready.tmp")
+	readyBody := fmt.Sprintf("%d %d\n", stat.pid, stat.startTime)
+	if err := os.WriteFile(tempReady, []byte(readyBody), 0o600); err != nil {
 		os.Exit(10)
 	}
-	time.Sleep(800 * time.Millisecond)
+	if err := os.Rename(tempReady, filepath.Join(root, "ready")); err != nil {
+		os.Exit(15)
+	}
+	time.Sleep(heldPipeChildLifetime)
 	if err := os.WriteFile(filepath.Join(root, "survived"), []byte("survived"), 0o600); err != nil {
 		os.Exit(11)
 	}
