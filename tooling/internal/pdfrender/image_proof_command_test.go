@@ -82,7 +82,7 @@ func TestImageProofHeldPipeCancellation(t *testing.T) {
 		t.Fatal("helper did not confirm the grandchild started within the start-up bound")
 	}
 	if _, err := os.Stat(filepath.Join(markerRoot, "ready")); err != nil {
-		t.Fatal("child did not confirm it was running before timeout")
+		t.Fatal("grandchild did not confirm it was running before cancellation")
 	}
 	if returnedAt.Sub(result.cancelledAt) > 4*time.Second {
 		t.Fatal("subprocess exceeded bounded cancellation margin")
