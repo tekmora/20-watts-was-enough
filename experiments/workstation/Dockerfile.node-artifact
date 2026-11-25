@@ -20,9 +20,12 @@ ENV EXPERIMENT_ARTIFACT="${EXPERIMENT_ARTIFACT}" \
     EXPERIMENT_SOURCE_REVISION="${SOURCE_REVISION}" \
     EXPERIMENT_RESULT_AUTHORITY="NO_RESULT"
 
+# The pinned base ships libzstd1 1.5.7+dfsg-1 with CVE-2026-124851. Reject versions below
+# trixie-security's 1.5.7+dfsg-1+deb13u1 until the base digest includes the fix.
 RUN set -eu; \
     apt-get update -qq; \
-    apt-get install -y --no-install-recommends zlib1g; \
+    apt-get install -y --no-install-recommends zlib1g libzstd1; \
+    dpkg --compare-versions "$(dpkg-query --show --showformat='${Version}' libzstd1)" ge '1.5.7+dfsg-1+deb13u1'; \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace

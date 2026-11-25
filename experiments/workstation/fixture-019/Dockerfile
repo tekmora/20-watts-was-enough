@@ -29,9 +29,12 @@ COPY --from=node-runtime /usr/lib/x86_64-linux-gnu/libatomic.so.1.2.0 /usr/lib/x
 WORKDIR /workspace
 COPY . /workspace/
 
+# The pinned base ships libzstd1 1.5.7+dfsg-1 with CVE-2026-124851. Reject versions below
+# trixie-security's 1.5.7+dfsg-1+deb13u1 until the base digest includes the fix.
 RUN set -eu; \
     apt-get update -qq; \
-    apt-get install -y --no-install-recommends zlib1g; \
+    apt-get install -y --no-install-recommends zlib1g libzstd1; \
+    dpkg --compare-versions "$(dpkg-query --show --showformat='${Version}' libzstd1)" ge '1.5.7+dfsg-1+deb13u1'; \
     rm -rf /var/lib/apt/lists/*; \
     test "$(cat .experiment-artifact)" = "fixture-019"; \
     test "$(cat .experiment-runner)" = "experiments/workstation/fixture-019/runner.mjs"; \

@@ -76,6 +76,11 @@ the exact diff; this file records why the project changed.
 
 ### Security
 
+- Fixture 007 and Fixture 019 install `libzstd1` 1.5.7+dfsg-1+deb13u1 from
+  trixie-security and fail to build with an older version. CI's Trivy scan
+  reported CVE-2026-124851 (HIGH) in `20w-fixture-007` and stopped there; a
+  scan of every image also finds it in `20w-fixture-019`. Both pinned trixie
+  bases ship 1.5.7+dfsg-1 and keep their existing digests.
 - The Go toolchain moves from 1.27.3 to 1.27.4 for GO-2026-6859
   (CVE-2026-97054, `https://pkg.go.dev/vuln/GO-2026-6859`) in `net/http`: an
   HTTP/1 server that uses `MaxBytesReader` or `MaxBytesHandler` can panic when
