@@ -380,6 +380,13 @@ the exact diff; this file records why the project changed.
 
 ### Fixed
 
+- The held-pipe image-proof subprocess test starts its 200 ms cancellation
+  deadline once the helper confirms that its grandchild runs, instead of at
+  the call. Start-up of the two test binaries has its own 10 s bound, so host
+  load at launch no longer fails the test. A silent helper mode keeps the
+  call's own timeout under test. The test proves the grandchild ended by
+  polling `/proc` for its recorded process identity, so a delayed grandchild
+  cannot hide a cancellation that only closes the pipes (#555).
 - Process-group cleanup no longer fails on macOS when the kill that follows
   the reaped group leader answers EPERM. A macOS runner measured 38 EPERM
   answers in 200 such kills with no group member left, and a second kill
